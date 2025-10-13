@@ -23,19 +23,21 @@
     <ClCompile Include="src\Connection.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Menu.cpp" />
+    <ClCompile Include="src\Protocol.cpp">
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="src\Utils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Client.h" />
     <ClInclude Include="include\Connection.h" />
     <ClInclude Include="include\Menu.h" />
-    <ClInclude Include="include\RequestCodes.h" />
-    <ClInclude Include="include\ResponseCodes.h" />
+    <ClInclude Include="include\Protocol.h" />
     <ClInclude Include="include\Utils.h" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="data\me.info.txt" />
-    <Text Include="data\server.info.txt" />
+    <None Include="data\me.info" />
+    <None Include="data\server.info" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>

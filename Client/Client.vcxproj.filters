@@ -27,6 +27,9 @@
     <ClCompile Include="src\main.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\Protocol.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Client.h">
@@ -35,25 +38,22 @@
     <ClInclude Include="include\Menu.h">
       <Filter>include</Filter>
     </ClInclude>
-    <ClInclude Include="include\RequestCodes.h">
-      <Filter>include</Filter>
-    </ClInclude>
-    <ClInclude Include="include\ResponseCodes.h">
-      <Filter>include</Filter>
-    </ClInclude>
     <ClInclude Include="include\Utils.h">
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="include\Connection.h">
       <Filter>include</Filter>
     </ClInclude>
+    <ClInclude Include="include\Protocol.h">
+      <Filter>include</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <Text Include="data\me.info.txt">
+    <None Include="data\me.info">
       <Filter>data</Filter>
-    </Text>
-    <Text Include="data\server.info.txt">
+    </None>
+    <None Include="data\server.info">
       <Filter>data</Filter>
-    </Text>
+    </None>
   </ItemGroup>
 </Project>
