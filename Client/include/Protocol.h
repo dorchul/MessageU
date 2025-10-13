@@ -20,7 +20,7 @@ enum class ResponseCode : uint16_t {
     PUBLIC_KEY = 2102,
     MESSAGE_RECEIVED = 2103,
     WAITING_MESSAGES = 2104,
-    ERROR = 9000
+    _ERROR_ = 9000
 };
 
 // ===== Message Header Structures =====

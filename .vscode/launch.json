@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+        "name": "Run MessageU Server (Python)",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/server/server.py",
+        "cwd": "${workspaceFolder}/server",
+        "console": "integratedTerminal"
+    },
+    {
+      "name": "Run MessageU Client (C++)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/client/src/build/Debug/outDebug.exe",
+      "cwd": "${workspaceFolder}/client/src",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "cppdbg",
+      "request": "launch",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "cwd": "c:/Users/dorse/source/repos/MessageU/Client/src",
+      "program": "c:/Users/dorse/source/repos/MessageU/Client/src/build/Debug/outDebug",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}
