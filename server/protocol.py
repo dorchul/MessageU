@@ -2,6 +2,8 @@ import struct
 
 # ===== Protocol Constants =====
 VERSION = 1
+CLIENT_ID_SIZE = 16
+PUBKEY_SIZE = 160
 
 # Request Codes
 REQ_REGISTER = 600

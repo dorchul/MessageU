@@ -1,35 +1,38 @@
-#include "Utils.h"
 #include "Connection.h"
-#include "Protocol.h"
+#include "Client.h"
+#include "Utils.h"
+
 #include <iostream>
-#include <cstring>
+#include <vector>
+#include <string>
 
 int main() {
     std::string ip;
     uint16_t port;
+
     if (!Utils::readServerInfo(ip, port)) {
-        std::cerr << "Failed to read server.info\n";
+        std::cerr << "Failed to read server.info" << std::endl;
         return 1;
     }
 
     Connection conn;
     if (!conn.connectToServer(ip, port)) {
-        std::cerr << "Connection failed.\n";
+        std::cerr << "Failed to connect to server" << std::endl;
         return 1;
     }
 
-    std::cout << "Connected to " << ip << ":" << port << "\n";
+    Client client(conn);
 
-    // ===== Dummy header send test =====
-    RequestHeader header{};
-    std::memset(&header, 0, sizeof(header));
-    std::memcpy(header.clientID, "0123456789ABCDEF", 16);
-    header.version = 1;
-    header.code = 600;        // Register request
-    header.payloadSize = 0;   // no payload for now
+    // For now, use dummy name + dummy public key (160 bytes of zeros)
+    std::string name = "Alice";
+    std::vector<uint8_t> dummyKey(160, 0);
 
-    if (!conn.sendAll(reinterpret_cast<uint8_t*>(&header), sizeof(header))) {
-        std::cerr << "Failed to send header.\n";
+    std::cout << "Sending registration..." << std::endl;
+    if (client.doRegister(name, dummyKey)) {
+        std::cout << "Registration succeeded!" << std::endl;
+    }
+    else {
+        std::cerr << "Registration failed!" << std::endl;
     }
 
     conn.closeConnection();

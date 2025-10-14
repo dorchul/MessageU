@@ -1,8 +1,9 @@
 import socket
 import struct
+from protocol import REQ_HEADER_FORMAT, REQ_REGISTER
+from handler import handle_register
 
 VERSION = 1
-REQ_HEADER_FORMAT = "<16sBHI"  # Little Endian: ClientID(16B), Version(1B), Code(2B), PayloadSize(4B)
 REQ_HEADER_SIZE = struct.calcsize(REQ_HEADER_FORMAT)
 
 
@@ -12,10 +13,21 @@ def read_port():
         return int(f.readline().strip())
 
 
+def recv_exact(conn, size):
+    """Receive exactly `size` bytes"""
+    buf = b''
+    while len(buf) < size:
+        chunk = conn.recv(size - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
 def handle_client(conn, addr):
     print(f"[+] Connected: {addr}")
-    data = conn.recv(REQ_HEADER_SIZE)
-    if len(data) < REQ_HEADER_SIZE:
+    data = recv_exact(conn, REQ_HEADER_SIZE)
+    if not data:
         print("[-] Incomplete header")
         conn.close()
         return
@@ -23,7 +35,15 @@ def handle_client(conn, addr):
     client_id, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
     print(f"[HEADER] Version={version}, Code={code}, PayloadSize={payload_size}")
 
+    payload = recv_exact(conn, payload_size) if payload_size > 0 else b''
+
+    if code == REQ_REGISTER:
+        handle_register(conn, payload)
+    else:
+        print(f"[-] Unknown request code: {code}")
+
     conn.close()
+
 
 def main():
     port = read_port()
@@ -34,7 +54,8 @@ def main():
 
         while True:
             conn, addr = s.accept()
-            handle_client(conn, addr) 
+            handle_client(conn, addr)
+
 
 if __name__ == "__main__":
     main()
