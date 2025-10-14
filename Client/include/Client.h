@@ -15,9 +15,11 @@ public:
     bool doRegister(const std::string& name, const std::vector<uint8_t>& pubKey);
 
     // GET CLIENTS LIST (601)
-    bool requestClientsList();
+    std::vector<std::pair<std::array<uint8_t, 16>, std::string>> requestClientsList();
 
-    // getters אם צריך בהמשך
+    // GET PUBLIC KEY (602)
+    std::vector<uint8_t> requestPublicKey(const std::string& targetUUID);
+
     const std::array<uint8_t, 16>& id() const { return m_clientId; }
     const std::string& name() const { return m_name; }
 

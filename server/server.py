@@ -1,20 +1,18 @@
 import socket
 import struct
-from protocol import REQ_HEADER_FORMAT, REQ_REGISTER, REQ_CLIENTS_LIST, RES_ERROR
-from handler import handle_register, handle_get_clients_list, send_response
+from protocol import REQ_HEADER_FORMAT, REQ_REGISTER, REQ_CLIENTS_LIST, REQ_PUBLIC_KEY, RES_ERROR
+from handler import handle_register, handle_get_clients_list, handle_get_public_key, send_response
 
 VERSION = 1
 REQ_HEADER_SIZE = struct.calcsize(REQ_HEADER_FORMAT)
-
 
 def read_port():
     """Read port number from myport.info"""
     with open("myport.info", "r") as f:
         return int(f.readline().strip())
 
-
 def recv_exact(conn, size):
-    """Receive exactly `size` bytes"""
+    """Receive exactly `size` bytes."""
     buf = b''
     while len(buf) < size:
         chunk = conn.recv(size - len(buf))
@@ -22,7 +20,6 @@ def recv_exact(conn, size):
             return None
         buf += chunk
     return buf
-
 
 def handle_client(conn, addr):
     print(f"[+] Connected: {addr}")
@@ -41,6 +38,9 @@ def handle_client(conn, addr):
                 handle_register(conn, payload)
             elif code == REQ_CLIENTS_LIST:
                 handle_get_clients_list(conn)
+            elif code == REQ_PUBLIC_KEY:
+                handle_get_public_key(conn, payload)
+
             else:
                 send_response(conn, RES_ERROR, b'unknown code')
 
@@ -50,20 +50,15 @@ def handle_client(conn, addr):
         conn.close()
         print(f"[-] Disconnected: {addr}")
 
-
-
-
 def main():
     port = read_port()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("0.0.0.0", port))
         s.listen(5)
         print(f"[SERVER] Listening on port {port}")
-
         while True:
             conn, addr = s.accept()
             handle_client(conn, addr)
-
 
 if __name__ == "__main__":
     main()

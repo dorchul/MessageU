@@ -5,6 +5,14 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <iomanip>
+#include <sstream>
+#include <algorithm>
+
+// Helper: compare UUIDs
+static bool uuidsEqual(const std::array<uint8_t, 16>& a, const std::array<uint8_t, 16>& b) {
+    return std::equal(a.begin(), a.end(), b.begin());
+}
 
 int main() {
     std::string ip;
@@ -23,25 +31,43 @@ int main() {
 
     Client client(conn);
 
-    // Dummy name + key for now
     std::string name = "Bob";
+
     std::vector<uint8_t> dummyKey(160, 0);
 
     std::cout << "Sending registration..." << std::endl;
-    if (client.doRegister(name, dummyKey)) {
-        std::cout << "Registration succeeded!\n";
+    if (!client.doRegister(name, dummyKey)) {
+        std::cerr << "Registration failed!" << std::endl;
+        conn.closeConnection();
+        return 1;
+    }
 
-        // === New: request clients list ===
-        std::cout << "Requesting clients list..." << std::endl;
-        if (client.requestClientsList()) {
-            std::cout << "Clients list request completed successfully.\n";
-        }
-        else {
-            std::cerr << "Clients list request failed.\n";
-        }
+    std::cout << "Registration succeeded!\n";
+
+    std::cout << "Requesting clients list..." << std::endl;
+    auto clients = client.requestClientsList();
+
+    if (!clients.empty()) {
+        std::cout << "Received " << clients.size() << " clients:\n";
+        for (const auto& c : clients)
+            std::cout << " - " << c.second << " (" << Utils::uuidToHex(c.first) << ")\n";
     }
     else {
-        std::cerr << "Registration failed!" << std::endl;
+        std::cerr << "No clients received.\n";
+    }
+
+    for (const auto& c : clients) {
+        // (no skip) – request public key for everyone, including yourself
+
+
+        std::cout << "\nRequesting public key for " << c.second << "...\n";
+        std::string targetUUID(reinterpret_cast<const char*>(c.first.data()), c.first.size());
+        std::vector<uint8_t> pubKey = client.requestPublicKey(targetUUID);
+
+        if (!pubKey.empty())
+            std::cout << "Public key received (" << pubKey.size() << " bytes) for " << c.second << ".\n";
+        else
+            std::cerr << "Failed to retrieve key for " << c.second << ".\n";
     }
 
     conn.closeConnection();

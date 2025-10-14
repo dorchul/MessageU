@@ -4,8 +4,7 @@ import time
 from collections import namedtuple
 from protocol import (
     VERSION,
-    REQ_REGISTER,
-    REQ_CLIENTS_LIST, 
+    RES_PUBLIC_KEY,
     RES_REGISTRATION_OK,
     RES_CLIENTS_LIST,
     RES_ERROR,
@@ -13,24 +12,22 @@ from protocol import (
     RES_HEADER_FORMAT,
 )
 
-
 Client = namedtuple('Client', 'id name pubkey last_seen')
 
 STATE = {
-    'clients_by_id': {},
-    'clients_by_name': {},
+    'clients_by_id': {},    # { uuid_bytes: Client(...) }
+    'clients_by_name': {},  # { name: uuid_bytes }
 }
 
-
+# ===== Response Helper =====
 def send_response(conn, code, payload=b''):
     """Send a binary response header + payload."""
     hdr = struct.pack(RES_HEADER_FORMAT, VERSION, code, len(payload))
     conn.sendall(hdr + payload)
 
-
+# ===== 600 REGISTER =====
 def handle_register(conn, payload: bytes):
     """Handle REGISTER (600) request."""
-    # Each register payload is: NameLen(1) | Name | PublicKey(160)
     if len(payload) < 1 + PUBKEY_SIZE:
         return send_response(conn, RES_ERROR, b'bad payload')
 
@@ -41,7 +38,7 @@ def handle_register(conn, payload: bytes):
     name = payload[1:1 + name_len].decode('utf-8', 'replace')
     pubkey = payload[1 + name_len:]
 
-    # Check if user already exists (idempotent registration)
+    # Check if user already exists (idempotent)
     if name in STATE['clients_by_name']:
         cid = STATE['clients_by_name'][name]
     else:
@@ -52,6 +49,7 @@ def handle_register(conn, payload: bytes):
     print(f"[REGISTER] {name} -> {cid.hex()}")
     send_response(conn, RES_REGISTRATION_OK, cid)
 
+# ===== 601 CLIENTS LIST =====
 def handle_get_clients_list(conn):
     clients = list(STATE['clients_by_id'].values())
     payload = struct.pack('<H', len(clients))
@@ -61,3 +59,20 @@ def handle_get_clients_list(conn):
 
     print(f"[CLIENTS LIST] Returning {len(clients)} clients")
     send_response(conn, RES_CLIENTS_LIST, payload)
+
+# ===== 602 PUBLIC KEY =====
+def handle_get_public_key(conn, payload):
+    """Handle 602: return public key for given client UUID."""
+    if len(payload) != 16:
+        print("[PUBLIC KEY] Invalid payload size")
+        return send_response(conn, RES_ERROR, b'')
+
+    target_id = payload
+    client = STATE['clients_by_id'].get(target_id)
+
+    if not client:
+        print("[PUBLIC KEY] UUID not found")
+        return send_response(conn, RES_ERROR, b'')
+
+    send_response(conn, RES_PUBLIC_KEY, client.pubkey)
+    print(f"[PUBLIC KEY] Sent key for {client.name}")

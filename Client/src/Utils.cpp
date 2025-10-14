@@ -33,3 +33,12 @@ bool Utils::saveMeInfo(const std::string& name, const std::array<uint8_t, 16>& i
     f.write(reinterpret_cast<const char*>(pub.data()), pub.size());
     return true;
 }
+
+std::string Utils::uuidToHex(const std::array<uint8_t, 16>& uuid) {
+    std::ostringstream oss;
+    for (auto b : uuid) {
+        oss << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(b);
+    }
+    return oss.str();
+}
