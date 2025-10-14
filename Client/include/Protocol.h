@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <vector>
 
 // ===== Protocol Constants =====
 constexpr uint8_t VERSION = 1;
@@ -41,8 +42,12 @@ struct ResponseHeader {
 
 // ===== Utility Functions =====
 namespace Protocol {
+    // Endian conversions
     uint16_t toLittleEndian16(uint16_t value);
     uint32_t toLittleEndian32(uint32_t value);
     uint16_t fromLittleEndian16(uint16_t value);
     uint32_t fromLittleEndian32(uint32_t value);
+
+    // === Packet builders ===
+    std::vector<uint8_t> buildClientListRequest(const uint8_t clientID[16]);
 }

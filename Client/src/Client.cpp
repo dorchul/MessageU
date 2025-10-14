@@ -58,3 +58,49 @@ bool Client::doRegister(const std::string& name, const std::vector<uint8_t>& pub
     m_clientId = id;
     return Utils::saveMeInfo(m_name, m_clientId, m_pubKey);
 }
+
+bool Client::requestClientsList() {
+    if (!m_conn.isConnected()) {
+        std::cerr << "Not connected to server.\n";
+        return false;
+    }
+
+    // === Build request packet ===
+    auto packet = Protocol::buildClientListRequest(m_clientId.data());
+
+    // === Send request ===
+    if (!m_conn.sendAll(packet.data(), static_cast<uint32_t>(packet.size()))) {
+        std::cerr << "Failed to send clients list request.\n";
+        return false;
+    }
+
+    // === Receive response header ===
+    ResponseHeader resHeader{};
+    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resHeader), sizeof(resHeader))) {
+        std::cerr << "Failed to receive response header.\n";
+        return false;
+    }
+
+    const uint16_t code = Protocol::fromLittleEndian16(resHeader.code);
+    const uint32_t payloadSize = Protocol::fromLittleEndian32(resHeader.payloadSize);
+
+    if (code == static_cast<uint16_t>(ResponseCode::CLIENTS_LIST)) {
+        std::vector<uint8_t> payload(payloadSize);
+        if (payloadSize > 0 && !m_conn.recvAll(payload.data(), payloadSize)) {
+            std::cerr << "Failed to receive clients list payload.\n";
+            return false;
+        }
+        std::cout << "Received clients list (" << payloadSize << " bytes)\n";
+        // TODO: parse payload once server format is finalized
+        return true;
+    }
+
+    if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
+        std::cerr << "Server responded with an error.\n";
+        return false;
+    }
+
+    std::cerr << "Unexpected response code: " << code << "\n";
+    return false;
+}
+

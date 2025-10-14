@@ -5,11 +5,14 @@ from collections import namedtuple
 from protocol import (
     VERSION,
     REQ_REGISTER,
+    REQ_CLIENTS_LIST, 
     RES_REGISTRATION_OK,
+    RES_CLIENTS_LIST,
     RES_ERROR,
     PUBKEY_SIZE,
     RES_HEADER_FORMAT,
 )
+
 
 Client = namedtuple('Client', 'id name pubkey last_seen')
 
@@ -48,3 +51,13 @@ def handle_register(conn, payload: bytes):
 
     print(f"[REGISTER] {name} -> {cid.hex()}")
     send_response(conn, RES_REGISTRATION_OK, cid)
+
+def handle_get_clients_list(conn):
+    clients = list(STATE['clients_by_id'].values())
+    payload = struct.pack('<H', len(clients))
+    for c in clients:
+        name_bytes = c.name.encode('utf-8')
+        payload += c.id + struct.pack('<B', len(name_bytes)) + name_bytes
+
+    print(f"[CLIENTS LIST] Returning {len(clients)} clients")
+    send_response(conn, RES_CLIENTS_LIST, payload)

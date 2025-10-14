@@ -15,6 +15,9 @@ public:
     bool recvAll(uint8_t* buffer, size_t size);
     void closeConnection();
 
+    // === New helper ===
+    bool isConnected() const { return connected; }
+
 private:
     SOCKET sock;
     bool connected;

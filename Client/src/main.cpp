@@ -23,13 +23,22 @@ int main() {
 
     Client client(conn);
 
-    // For now, use dummy name + dummy public key (160 bytes of zeros)
-    std::string name = "Alice";
+    // Dummy name + key for now
+    std::string name = "Bob";
     std::vector<uint8_t> dummyKey(160, 0);
 
     std::cout << "Sending registration..." << std::endl;
     if (client.doRegister(name, dummyKey)) {
-        std::cout << "Registration succeeded!" << std::endl;
+        std::cout << "Registration succeeded!\n";
+
+        // === New: request clients list ===
+        std::cout << "Requesting clients list..." << std::endl;
+        if (client.requestClientsList()) {
+            std::cout << "Clients list request completed successfully.\n";
+        }
+        else {
+            std::cerr << "Clients list request failed.\n";
+        }
     }
     else {
         std::cerr << "Registration failed!" << std::endl;

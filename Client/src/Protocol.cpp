@@ -1,6 +1,7 @@
 #include "Protocol.h"
 #include <cstring>
 #include <iostream>
+#include <vector>
 
 // ===== Endian Conversion =====
 static bool isLittleEndian() {
@@ -29,7 +30,6 @@ uint32_t Protocol::fromLittleEndian32(uint32_t value) {
     return toLittleEndian32(value);
 }
 
-
 // ===== Serialization Test =====
 void testHeaderSerialization() {
     RequestHeader req{};
@@ -53,10 +53,22 @@ void testHeaderSerialization() {
     std::cout << "PayloadSize: " << Protocol::fromLittleEndian32(parsed.payloadSize) << "\n";
 }
 
+// ===== Build "Request Clients List" Packet =====
+std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[16]) {
+    RequestHeader header{};
+    std::memcpy(header.clientID, clientID, 16);
+    header.version = VERSION;
+    header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_CLIENTS_LIST));
+    header.payloadSize = toLittleEndian32(0); // No payload
+
+    std::vector<uint8_t> buffer(sizeof(RequestHeader));
+    std::memcpy(buffer.data(), &header, sizeof(RequestHeader));
+    return buffer;
+}
+
 #ifdef PROTOCOL_TEST
 int main() {
     testHeaderSerialization();
     return 0;
 }
 #endif
-

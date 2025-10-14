@@ -1,7 +1,7 @@
 import socket
 import struct
-from protocol import REQ_HEADER_FORMAT, REQ_REGISTER
-from handler import handle_register
+from protocol import REQ_HEADER_FORMAT, REQ_REGISTER, REQ_CLIENTS_LIST, RES_ERROR
+from handler import handle_register, handle_get_clients_list, send_response
 
 VERSION = 1
 REQ_HEADER_SIZE = struct.calcsize(REQ_HEADER_FORMAT)
@@ -26,23 +26,31 @@ def recv_exact(conn, size):
 
 def handle_client(conn, addr):
     print(f"[+] Connected: {addr}")
-    data = recv_exact(conn, REQ_HEADER_SIZE)
-    if not data:
-        print("[-] Incomplete header")
+    try:
+        while True:
+            data = recv_exact(conn, REQ_HEADER_SIZE)
+            if not data:
+                break
+
+            client_id, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
+            print(f"[HEADER] Version={version}, Code={code}, PayloadSize={payload_size}")
+
+            payload = recv_exact(conn, payload_size) if payload_size > 0 else b''
+
+            if code == REQ_REGISTER:
+                handle_register(conn, payload)
+            elif code == REQ_CLIENTS_LIST:
+                handle_get_clients_list(conn)
+            else:
+                send_response(conn, RES_ERROR, b'unknown code')
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
+    finally:
         conn.close()
-        return
+        print(f"[-] Disconnected: {addr}")
 
-    client_id, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
-    print(f"[HEADER] Version={version}, Code={code}, PayloadSize={payload_size}")
 
-    payload = recv_exact(conn, payload_size) if payload_size > 0 else b''
-
-    if code == REQ_REGISTER:
-        handle_register(conn, payload)
-    else:
-        print(f"[-] Unknown request code: {code}")
-
-    conn.close()
 
 
 def main():
