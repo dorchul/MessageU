@@ -65,11 +65,11 @@ Thumbs.db
 # --- IDE config (optional keep: .sln and .vcxproj) ---
 # Keep solution and project files so others can open it easily
 # Comment these lines if you want to exclude them
-!Client.sln
-!Client.vcxproj
-!Client.vcxproj.filters
-!server.sln
-!server.pyproj
+#!Client.sln
+#!Client.vcxproj
+#!Client.vcxproj.filters
+#!server.sln
+#!server.pyproj
 
 # --- Ignore extra project system files ---
 *.userosscache
