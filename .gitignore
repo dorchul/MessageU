@@ -62,14 +62,12 @@ server/*.tmp
 .DS_Store
 Thumbs.db
 
-# --- IDE config (optional keep: .sln and .vcxproj) ---
-# Keep solution and project files so others can open it easily
-# Comment these lines if you want to exclude them
-#!Client.sln
-#!Client.vcxproj
-#!Client.vcxproj.filters
-#!server.sln
-#!server.pyproj
+# --- IDE config (ignore Visual Studio / Python project files) ---
+Client.sln
+Client/Client.vcxproj
+Client/Client.vcxproj.filters
+server/server.sln
+server/server.pyproj
 
 # --- Ignore extra project system files ---
 *.userosscache
