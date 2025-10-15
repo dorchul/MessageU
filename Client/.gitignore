@@ -1,0 +1,88 @@
+# ========================
+# MessageU Project .gitignore
+# ========================
+
+# --- Visual Studio ---
+.vs/
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+*.log
+*.pdb
+*.obj
+*.idb
+*.tlog
+*.ipch
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.cache
+*.aps
+*.ncb
+*.sdf
+*.opendb
+*.db
+
+# --- Build output directories ---
+x64/
+x86/
+Debug/
+Release/
+[Bb]in/
+[Oo]bj/
+
+# --- Visual Studio project backup & cache ---
+*.lastbuildstate
+*.vscode/
+*.vspscc
+*.vssscc
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pycache/
+*.egg-info/
+*.egg
+*.log
+*.tmp
+
+# --- Local runtime files ---
+client/data/me.info
+server/defensive.db
+server/myport.info
+server/*.log
+server/*.tmp
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- IDE config (optional keep: .sln and .vcxproj) ---
+# Keep solution and project files so others can open it easily
+# Comment these lines if you want to exclude them
+!Client.sln
+!Client.vcxproj
+!Client.vcxproj.filters
+!server.sln
+!server.pyproj
+
+# --- Ignore extra project system files ---
+*.userosscache
+*.sln.docstates
+mono_crash.*
+
+# --- Other ---
+*.bak
+*.old
+*.orig
+*.swp
+*.swo
+
+# ========================
+# END
+# ========================
