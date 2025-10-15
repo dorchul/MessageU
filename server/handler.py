@@ -1,125 +1,130 @@
-import uuid
 import struct
-import time
-from collections import namedtuple
 from protocol import (
-    VERSION,
-    RES_PUBLIC_KEY,
-    RES_REGISTRATION_OK,
-    RES_CLIENTS_LIST,
-    RES_MESSAGE_RECEIVED,
     RES_ERROR,
-    PUBKEY_SIZE,
-    RES_HEADER_FORMAT,
-    MSG_TYPE_FILE,
+    RES_MESSAGE_RECEIVED,
+    RES_WAITING_MESSAGES,
+    MSG_TYPE_REQUEST_SYM,
     MSG_TYPE_SEND_SYM,
     MSG_TYPE_TEXT,
-    MSG_TYPE_REQUEST_SYM
+    MSG_TYPE_FILE,
 )
 
-Client = namedtuple('Client', 'id name pubkey last_seen')
-
+# ===== Global State =====
+# Holds clients and their pending messages
 STATE = {
-    'clients_by_id': {},    # { uuid_bytes: Client(...) }
-    'clients_by_name': {},  # { name: uuid_bytes }
+    "clients": {},   # client_id(hex) → {"name": str, "pubkey": bytes}
+    "pending": {}    # to_client_id(hex) → [ (from_id_hex, type, content_bytes) ]
 }
 
-# ===== Response Helper =====
-def send_response(conn, code, payload=b''):
-    """Send a binary response header + payload."""
-    hdr = struct.pack(RES_HEADER_FORMAT, VERSION, code, len(payload))
-    conn.sendall(hdr + payload)
+def send_response(conn, code, payload: bytes):
+    try:
+        header = struct.pack("<BHI", 1, code, len(payload))
+        conn.sendall(header)
+        if payload:
+            conn.sendall(payload)
+        print(f"[SEND_RESPONSE] Code={code}, PayloadSize={len(payload)} sent.")
+    except Exception as e:
+        print(f"[SEND_RESPONSE ERROR] {e}")
 
-# ===== 600 REGISTER =====
+
+# ===== 600 – Registration =====
 def handle_register(conn, payload: bytes):
-    """Handle REGISTER (600) request."""
-    if len(payload) < 1 + PUBKEY_SIZE:
-        return send_response(conn, RES_ERROR, b'bad payload')
+    if len(payload) < 1 + 160:
+        print("[REGISTER] Invalid payload.")
+        send_response(conn, RES_ERROR, b"")
+        return
 
     name_len = payload[0]
-    if len(payload) != 1 + name_len + PUBKEY_SIZE:
-        return send_response(conn, RES_ERROR, b'bad length')
+    name = payload[1:1 + name_len].decode(errors="ignore")
+    pubkey = payload[1 + name_len:1 + name_len + 160]
 
-    name = payload[1:1 + name_len].decode('utf-8', 'replace')
-    pubkey = payload[1 + name_len:]
-
-    # Check if user already exists (idempotent)
-    if name in STATE['clients_by_name']:
-        cid = STATE['clients_by_name'][name]
-    else:
-        cid = uuid.uuid4().bytes
-        STATE['clients_by_name'][name] = cid
-        STATE['clients_by_id'][cid] = Client(cid, name, pubkey, time.time())
+    # Generate fake UUID for simplicity
+    import uuid
+    cid = uuid.uuid4().bytes
+    STATE["clients"][cid.hex()] = {"name": name, "pubkey": pubkey}
 
     print(f"[REGISTER] {name} -> {cid.hex()}")
-    send_response(conn, RES_REGISTRATION_OK, cid)
+    send_response(conn, 2100, cid)
 
-# ===== 601 CLIENTS LIST =====
+
+# ===== 601 – Clients List =====
 def handle_get_clients_list(conn):
-    clients = list(STATE['clients_by_id'].values())
-    payload = struct.pack('<H', len(clients))
-    for c in clients:
-        name_bytes = c.name.encode('utf-8')
-        payload += c.id + struct.pack('<B', len(name_bytes)) + name_bytes
+    print("[CLIENTS LIST] Returning", len(STATE["clients"]), "clients")
+    payload = struct.pack("<H", len(STATE["clients"]))
+    for cid_hex, info in STATE["clients"].items():
+        cid_bytes = bytes.fromhex(cid_hex)
+        name_bytes = info["name"].encode()
+        payload += cid_bytes + struct.pack("B", len(name_bytes)) + name_bytes
+    send_response(conn, 2101, payload)
 
-    print(f"[CLIENTS LIST] Returning {len(clients)} clients")
-    send_response(conn, RES_CLIENTS_LIST, payload)
 
-# ===== 602 PUBLIC KEY =====
-def handle_get_public_key(conn, payload):
-    """Handle 602: return public key for given client UUID."""
+# ===== 602 – Public Key =====
+def handle_get_public_key(conn, payload: bytes):
     if len(payload) != 16:
-        print("[PUBLIC KEY] Invalid payload size")
-        return send_response(conn, RES_ERROR, b'')
+        print("[PUBLIC KEY] Invalid UUID length.")
+        send_response(conn, RES_ERROR, b"")
+        return
 
-    target_id = payload
-    client = STATE['clients_by_id'].get(target_id)
+    cid_hex = payload.hex()
+    if cid_hex not in STATE["clients"]:
+        print(f"[PUBLIC KEY] No such client: {cid_hex}")
+        send_response(conn, RES_ERROR, b"")
+        return
 
-    if not client:
-        print("[PUBLIC KEY] UUID not found")
-        return send_response(conn, RES_ERROR, b'')
+    pubkey = STATE["clients"][cid_hex]["pubkey"]
+    send_response(conn, 2102, pubkey)
+    print(f"[PUBLIC KEY] Sent key for {STATE['clients'][cid_hex]['name']}")
 
-    send_response(conn, RES_PUBLIC_KEY, client.pubkey)
-    print(f"[PUBLIC KEY] Sent key for {client.name}")
 
-def handle_send_message(conn, client_id, payload, state):
-    """
-    Handle incoming message (603).
-    Payload structure:
-        ToClientID(16B) | Type(1B) | ContentSize(4B) | Content(variable)
-    """
-    # --- Parse payload header ---
-    if len(payload) < 21:  # 16 + 1 + 4
-        print("Invalid payload length for 603")
-        send_response(conn, RES_MESSAGE_RECEIVED, b"")
+# ===== 603 – Send Message =====
+def handle_send_message(conn, client_id: bytes, payload: bytes, state):
+    if len(payload) < 21:
+        print("[603] Invalid payload length.")
+        send_response(conn, RES_ERROR, b"")
         return
 
     to_client_id = payload[0:16]
     msg_type = payload[16]
     content_size = struct.unpack("<I", payload[17:21])[0]
-    content = payload[21 : 21 + content_size]
+    content = payload[21:21 + content_size]
 
     print(f"[603] Message from {client_id.hex()} to {to_client_id.hex()}")
-    print(f"       Type={msg_type}, ContentSize={content_size}")
+    print(f"     Type={msg_type}, ContentSize={content_size}")
 
-    # --- Optional debug output ---
+    # Debug text output
     if msg_type == MSG_TYPE_TEXT:
         try:
             text = content.decode(errors="ignore")
-            print(f"       Text message: {text}")
+            print(f"     Text message: {text}")
         except Exception:
-            print("       (Failed to decode message content)")
+            print("     (Failed to decode message content)")
 
-    elif msg_type == MSG_TYPE_REQUEST_SYM:
-        print("       Request for symmetric key")
-
-    elif msg_type == MSG_TYPE_SEND_SYM:
-        print("       Received symmetric key (RSA encrypted)")
-
-    elif msg_type == MSG_TYPE_FILE:
-        print("       File transfer (ignored for now)")
-
-    # Store or forward logic can go here later (bonus/extension)
-    # For now, just acknowledge message receipt.
+    # Store pending message
+    to_hex = to_client_id.hex()
+    msg_record = (client_id.hex(), msg_type, content)
+    state.setdefault("pending", {})
+    state["pending"].setdefault(to_hex, []).append(msg_record)
+    print(f"     Stored message for {to_hex}. Pending count: {len(state['pending'][to_hex])}")
 
     send_response(conn, RES_MESSAGE_RECEIVED, b"")
+
+
+# ===== 604 – Get Waiting Messages =====
+def handle_get_waiting_messages(conn, client_id: bytes, payload: bytes, state):
+    hex_id = client_id.hex()
+    pending = state.get("pending", {}).get(hex_id, [])
+    print(f"[604] {len(pending)} waiting messages for {hex_id}")
+
+    response = b''
+    for from_id_hex, mtype, content in pending:
+        part = bytes.fromhex(from_id_hex)
+        part += struct.pack("<B", mtype)
+        part += struct.pack("<I", len(content))
+        part += content
+        response += part
+
+    # Clear delivered messages
+    if hex_id in state.get("pending", {}):
+        state["pending"][hex_id].clear()
+
+    send_response(conn, 2104, response)

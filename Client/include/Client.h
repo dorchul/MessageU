@@ -26,6 +26,9 @@ public:
         MessageType type,
         const std::vector<uint8_t>& content);
 
+    // GET WAITING MESSAGES (604)
+    void requestWaitingMessages();
+    
     const std::array<uint8_t, 16>& id() const { return m_clientId; }
     const std::string& name() const { return m_name; }
 

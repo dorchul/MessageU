@@ -7,12 +7,11 @@
 #include <vector>
 #include <string>
 #include <iomanip>
-#include <sstream>
-#include <algorithm>
+#include <thread>
+#include <chrono>
 
-// Helper: compare UUIDs
-static bool uuidsEqual(const std::array<uint8_t, 16>& a, const std::array<uint8_t, 16>& b) {
-    return std::equal(a.begin(), a.end(), b.begin());
+static void printDivider(const std::string& title) {
+    std::cout << "\n================ " << title << " ================\n";
 }
 
 int main() {
@@ -20,72 +19,92 @@ int main() {
     uint16_t port;
 
     if (!Utils::readServerInfo(ip, port)) {
-        std::cerr << "Failed to read server.info" << std::endl;
+        std::cerr << "Failed to read server.info\n";
         return 1;
     }
 
-    Connection conn;
-    if (!conn.connectToServer(ip, port)) {
-        std::cerr << "Failed to connect to server" << std::endl;
+    // ===== Create two separate connections =====
+    Connection connBob;
+    Connection connAlice;
+
+    if (!connBob.connectToServer(ip, port) || !connAlice.connectToServer(ip, port)) {
+        std::cerr << "Failed to connect clients.\n";
         return 1;
     }
 
-    Client client(conn);
+    Client bob(connBob);
+    Client alice(connAlice);
 
-    // You can change this name to "Alice" for the second run
-    std::string name = "Alice";
-    std::vector<uint8_t> dummyKey(160, 0);
+    // ===== 600: Register both =====
+    printDivider("Registration");
+    std::vector<uint8_t> dummyKey(160, 0x42);
 
-    std::cout << "Sending registration..." << std::endl;
-    if (!client.doRegister(name, dummyKey)) {
-        std::cerr << "Registration failed!" << std::endl;
-        conn.closeConnection();
-        return 1;
-    }
+    std::cout << "[Bob] Registering...\n";
+    if (!bob.doRegister("Bob", dummyKey)) return 1;
+    std::cout << "[Alice] Registering...\n";
+    if (!alice.doRegister("Alice", dummyKey)) return 1;
 
-    std::cout << "Registration succeeded!\n";
+    // ===== 601: Each requests client list =====
+    printDivider("Clients List");
+    auto listBob = bob.requestClientsList();
+    auto listAlice = alice.requestClientsList();
 
-    std::cout << "Requesting clients list..." << std::endl;
-    auto clients = client.requestClientsList();
+    std::cout << "[Bob] sees:\n";
+    for (const auto& c : listBob)
+        std::cout << "  - " << c.second << " (" << Utils::uuidToHex(c.first) << ")\n";
 
-    if (!clients.empty()) {
-        std::cout << "Received " << clients.size() << " clients:\n";
-        for (const auto& c : clients)
-            std::cout << " - " << c.second << " (" << Utils::uuidToHex(c.first) << ")\n";
-    }
-    else {
-        std::cerr << "No clients received.\n";
-    }
+    std::cout << "[Alice] sees:\n";
+    for (const auto& c : listAlice)
+        std::cout << "  - " << c.second << " (" << Utils::uuidToHex(c.first) << ")\n";
 
-    // Request public key for all other clients
-    for (const auto& c : clients) {
-        std::cout << "\nRequesting public key for " << c.second << "...\n";
-        std::string targetUUID(reinterpret_cast<const char*>(c.first.data()), c.first.size());
-        std::vector<uint8_t> pubKey = client.requestPublicKey(targetUUID);
+    // ===== Bob finds Alice UUID =====
+    std::array<uint8_t, 16> aliceUUID{};
+    for (const auto& c : listBob)
+        if (c.second == "Alice")
+            aliceUUID = c.first;
 
-        if (!pubKey.empty())
-            std::cout << "Public key received (" << pubKey.size() << " bytes) for " << c.second << ".\n";
-        else
-            std::cerr << "Failed to retrieve key for " << c.second << ".\n";
-    }
+    // ===== Bob requests Alice’s public key (602) =====
+    printDivider("Bob Requests Alice Public Key");
+    std::string aliceUUIDstr(reinterpret_cast<const char*>(aliceUUID.data()), 16);
+    auto alicePK = bob.requestPublicKey(aliceUUIDstr);
+    std::cout << "[Bob] Got Alice’s key (" << alicePK.size() << " bytes)\n";
 
-    // Send a test message to the first other client
-    for (const auto& c : clients) {
-        if (c.second == name) continue;
+    // ===== Bob sends message to Alice (603) =====
+    printDivider("Bob Sends Message to Alice");
+    std::string msgToAlice = "Hello Alice, this is Bob!";
+    std::vector<uint8_t> msgContent(msgToAlice.begin(), msgToAlice.end());
+    bob.sendMessage(aliceUUID, MessageType::TEXT, msgContent);
 
-        std::string msg = "Hello from " + name + "!";
-        std::vector<uint8_t> content(msg.begin(), msg.end());
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-        std::cout << "\nSending message to " << c.second << "...\n";
-        if (client.sendMessage(c.first, MessageType::TEXT, content))
-            std::cout << "[OK] Message sent successfully.\n";
-        else
-            std::cout << "[ERR] Failed to send message.\n";
+    // ===== Alice requests waiting messages (604) =====
+    printDivider("Alice Requests Waiting Messages");
+    alice.requestWaitingMessages();
 
-        break; // send only once for testing
-    }
+    // ===== Alice requests Bob’s public key (602) =====
+    printDivider("Alice Requests Bob Public Key");
+    std::array<uint8_t, 16> bobUUID{};
+    for (const auto& c : listAlice)
+        if (c.second == "Bob")
+            bobUUID = c.first;
+    std::string bobUUIDstr(reinterpret_cast<const char*>(bobUUID.data()), 16);
+    auto bobPK = alice.requestPublicKey(bobUUIDstr);
+    std::cout << "[Alice] Got Bob’s key (" << bobPK.size() << " bytes)\n";
 
-    std::cout << "\nAll tests completed.\n";
-    conn.closeConnection();
+    // ===== Alice sends confirmation back to Bob (603) =====
+    printDivider("Alice Sends Reply to Bob");
+    std::string msgToBob = "Hi Bob! I got your message.";
+    std::vector<uint8_t> reply(msgToBob.begin(), msgToBob.end());
+    alice.sendMessage(bobUUID, MessageType::TEXT, reply);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // ===== Bob checks waiting messages (604) =====
+    printDivider("Bob Requests Waiting Messages");
+    bob.requestWaitingMessages();
+
+    printDivider("Conversation Complete");
+    connBob.closeConnection();
+    connAlice.closeConnection();
     return 0;
 }

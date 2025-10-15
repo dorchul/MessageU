@@ -13,7 +13,9 @@ from handler import (
     handle_get_clients_list,
     handle_get_public_key,
     handle_send_message, 
-    send_response
+    send_response,
+    handle_get_waiting_messages,
+    STATE
 )
 
 VERSION = 1
@@ -53,8 +55,10 @@ def handle_client(conn, addr):
                 handle_get_clients_list(conn)
             elif code == REQ_PUBLIC_KEY:
                 handle_get_public_key(conn, payload)
-            elif code == REQ_SEND_MESSAGE:   
-                handle_send_message(conn, client_id, payload, state={})
+            elif code == REQ_SEND_MESSAGE:
+                handle_send_message(conn, client_id, payload, STATE)
+            elif code == 604:
+                handle_get_waiting_messages(conn, client_id, payload, STATE)
             else:
                 send_response(conn, RES_ERROR, b'unknown code')
 
@@ -65,6 +69,8 @@ def handle_client(conn, addr):
         conn.close()
         print(f"[-] Disconnected: {addr}")
 
+import threading
+
 def main():
     port = read_port()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -73,7 +79,8 @@ def main():
         print(f"[SERVER] Listening on port {port}")
         while True:
             conn, addr = s.accept()
-            handle_client(conn, addr)
+            t = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+            t.start()
 
 if __name__ == "__main__":
     main()

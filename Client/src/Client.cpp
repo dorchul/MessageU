@@ -239,3 +239,80 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     return true;
 }
 
+// ===============================
+// Get Waiting Messages (604 → 2104)
+// ===============================
+void Client::requestWaitingMessages() {
+    using namespace Protocol;
+
+    // --- Build request header (no payload) ---
+    RequestHeader header{};
+    std::memcpy(header.clientID, m_clientId.data(), 16);
+    header.version = VERSION;
+    header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_WAITING_MESSAGES));
+    header.payloadSize = toLittleEndian32(0);
+
+    if (!m_conn.sendAll(reinterpret_cast<uint8_t*>(&header), sizeof(header))) {
+        std::cerr << "Failed to send 604 request.\n";
+        return;
+    }
+
+    // --- Receive response header ---
+    ResponseHeader resp{};
+    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp))) {
+        std::cerr << "Failed to receive 2104 header.\n";
+        return;
+    }
+
+    const uint16_t code = fromLittleEndian16(resp.code);
+    const uint32_t size = fromLittleEndian32(resp.payloadSize);
+
+    if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
+        std::cout << "Server responded with an error.\n";
+        return;
+    }
+    if (code != static_cast<uint16_t>(ResponseCode::WAITING_MESSAGES)) {
+        std::cerr << "Unexpected response code: " << code << "\n";
+        return;
+    }
+
+    // --- Receive payload ---
+    std::vector<uint8_t> payload(size);
+    if (size > 0 && !m_conn.recvAll(payload.data(), size)) {
+        std::cerr << "Failed to receive payload.\n";
+        return;
+    }
+
+    // --- Parse waiting messages ---
+    size_t offset = 0;
+    int msg_count = 0;
+    while (offset + 21 <= payload.size()) {
+        std::array<uint8_t, 16> fromUUID{};
+        std::memcpy(fromUUID.data(), payload.data() + offset, 16);
+        offset += 16;
+
+        uint8_t type = payload[offset++];
+        uint32_t contentSize = 0;
+        std::memcpy(&contentSize, payload.data() + offset, 4);
+        contentSize = fromLittleEndian32(contentSize);
+        offset += 4;
+
+        if (offset + contentSize > payload.size()) break;
+        std::vector<uint8_t> content(payload.begin() + offset, payload.begin() + offset + contentSize);
+        offset += contentSize;
+
+        std::cout << "\n[Message " << ++msg_count << "] From: " << Utils::uuidToHex(fromUUID)
+            << " | Type: " << static_cast<int>(type)
+            << " | Size: " << contentSize << "\n";
+
+        if (type == static_cast<uint8_t>(MessageType::TEXT)) {
+            std::string text(content.begin(), content.end());
+            std::cout << "  Text: " << text << "\n";
+        }
+    }
+
+    if (msg_count == 0)
+        std::cout << "No waiting messages.\n";
+}
+
+
