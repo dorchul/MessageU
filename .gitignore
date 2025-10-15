@@ -68,6 +68,7 @@ Client/Client.vcxproj
 Client/Client.vcxproj.filters
 server/server.sln
 server/server.pyproj
+.vscode/
 
 # --- Ignore extra project system files ---
 *.userosscache
