@@ -1,7 +1,20 @@
 import socket
 import struct
-from protocol import REQ_HEADER_FORMAT, REQ_REGISTER, REQ_CLIENTS_LIST, REQ_PUBLIC_KEY, RES_ERROR
-from handler import handle_register, handle_get_clients_list, handle_get_public_key, send_response
+from protocol import (
+    REQ_HEADER_FORMAT,
+    REQ_REGISTER,
+    REQ_CLIENTS_LIST,
+    REQ_PUBLIC_KEY,
+    REQ_SEND_MESSAGE, 
+    RES_ERROR
+)
+from handler import (
+    handle_register,
+    handle_get_clients_list,
+    handle_get_public_key,
+    handle_send_message, 
+    send_response
+)
 
 VERSION = 1
 REQ_HEADER_SIZE = struct.calcsize(REQ_HEADER_FORMAT)
@@ -40,9 +53,11 @@ def handle_client(conn, addr):
                 handle_get_clients_list(conn)
             elif code == REQ_PUBLIC_KEY:
                 handle_get_public_key(conn, payload)
-
+            elif code == REQ_SEND_MESSAGE:   
+                handle_send_message(conn, client_id, payload, state={})
             else:
                 send_response(conn, RES_ERROR, b'unknown code')
+
 
     except Exception as e:
         print(f"[ERROR] {e}")

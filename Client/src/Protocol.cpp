@@ -66,6 +66,50 @@ std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[16]
     return buffer;
 }
 
+// ===== Build "Send Message" Request (603) =====
+//
+// Format:
+// [Header]
+//   clientID(16) | version(1) | code(2) | payloadSize(4)
+// [Payload]
+//   toClientID(16) | type(1) | contentSize(4) | content(variable)
+std::vector<uint8_t> Protocol::buildSendMessageRequest(
+    const uint8_t clientID[16],
+    const uint8_t toClientID[16],
+    MessageType type,
+    const std::vector<uint8_t>& content)
+{
+    // ---- Prepare payload ----
+    MessagePayload payload{};
+    std::memcpy(payload.toClientID, toClientID, 16);
+    payload.type = static_cast<uint8_t>(type);
+    payload.contentSize = toLittleEndian32(static_cast<uint32_t>(content.size()));
+
+    const uint32_t payloadSize = sizeof(MessagePayload) + static_cast<uint32_t>(content.size());
+
+    // ---- Build header ----
+    RequestHeader header{};
+    std::memcpy(header.clientID, clientID, 16);
+    header.version = VERSION;
+    header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::SEND_MESSAGE));
+    header.payloadSize = toLittleEndian32(payloadSize);
+
+    // ---- Serialize header + payload ----
+    std::vector<uint8_t> packet;
+    packet.reserve(sizeof(RequestHeader) + payloadSize);
+
+    const uint8_t* headerPtr = reinterpret_cast<const uint8_t*>(&header);
+    packet.insert(packet.end(), headerPtr, headerPtr + sizeof(RequestHeader));
+
+    const uint8_t* payloadPtr = reinterpret_cast<const uint8_t*>(&payload);
+    packet.insert(packet.end(), payloadPtr, payloadPtr + sizeof(MessagePayload));
+
+    if (!content.empty())
+        packet.insert(packet.end(), content.begin(), content.end());
+
+    return packet;
+}
+
 #ifdef PROTOCOL_TEST
 int main() {
     testHeaderSerialization();

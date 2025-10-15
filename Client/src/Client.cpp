@@ -174,3 +174,68 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUID) {
 
     return pubKey;
 }
+
+// ===============================
+// Send Message (603 → 2103)
+// ===============================
+bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
+    MessageType type,
+    const std::vector<uint8_t>& content)
+{
+    using namespace Protocol;
+
+    // Build packet (header + payload)
+    const std::vector<uint8_t> packet =
+        Protocol::buildSendMessageRequest(m_clientId.data(),
+            toClient.data(),
+            type,
+            content);
+
+    // Send
+    if (!m_conn.sendAll(packet.data(), packet.size())) {
+        std::cerr << "Failed to send message request.\n";
+        return false;
+    }
+
+    // Receive response header
+    ResponseHeader resp{};
+    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp))) {
+        std::cerr << "Failed to receive response header.\n";
+        return false;
+    }
+
+    const uint16_t code = Protocol::fromLittleEndian16(resp.code);
+    const uint32_t payloadSize = Protocol::fromLittleEndian32(resp.payloadSize);
+
+    if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
+        std::cout << "Server responded with an error.\n";
+        // Drain any error payload if present to keep stream clean
+        if (payloadSize > 0) {
+            std::vector<uint8_t> drain(payloadSize);
+            m_conn.recvAll(drain.data(), payloadSize);
+        }
+        return false;
+    }
+
+    if (code != static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED)) {
+        std::cerr << "Unexpected response code: " << code << "\n";
+        // Drain unexpected payload to keep the socket aligned
+        if (payloadSize > 0) {
+            std::vector<uint8_t> drain(payloadSize);
+            m_conn.recvAll(drain.data(), payloadSize);
+        }
+        return false;
+    }
+
+    // Typically 2103 has no payload; if server sends any, drain it.
+    if (payloadSize > 0) {
+        std::vector<uint8_t> drain(payloadSize);
+        if (!m_conn.recvAll(drain.data(), payloadSize)) {
+            std::cerr << "Failed to drain response payload.\n";
+            return false;
+        }
+    }
+
+    return true;
+}
+

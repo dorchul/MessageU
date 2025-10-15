@@ -3,6 +3,7 @@
 #include <vector>
 #include <array>
 #include <cstdint>
+#include "Protocol.h"
 
 class Connection;
 
@@ -20,8 +21,14 @@ public:
     // GET PUBLIC KEY (602)
     std::vector<uint8_t> requestPublicKey(const std::string& targetUUID);
 
+    // SEND MESSAGE (603)
+    bool sendMessage(const std::array<uint8_t, 16>& toClient,
+        MessageType type,
+        const std::vector<uint8_t>& content);
+
     const std::array<uint8_t, 16>& id() const { return m_clientId; }
     const std::string& name() const { return m_name; }
+
 
 private:
     Connection& m_conn;

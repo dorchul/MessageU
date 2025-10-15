@@ -7,9 +7,14 @@ from protocol import (
     RES_PUBLIC_KEY,
     RES_REGISTRATION_OK,
     RES_CLIENTS_LIST,
+    RES_MESSAGE_RECEIVED,
     RES_ERROR,
     PUBKEY_SIZE,
     RES_HEADER_FORMAT,
+    MSG_TYPE_FILE,
+    MSG_TYPE_SEND_SYM,
+    MSG_TYPE_TEXT,
+    MSG_TYPE_REQUEST_SYM
 )
 
 Client = namedtuple('Client', 'id name pubkey last_seen')
@@ -76,3 +81,45 @@ def handle_get_public_key(conn, payload):
 
     send_response(conn, RES_PUBLIC_KEY, client.pubkey)
     print(f"[PUBLIC KEY] Sent key for {client.name}")
+
+def handle_send_message(conn, client_id, payload, state):
+    """
+    Handle incoming message (603).
+    Payload structure:
+        ToClientID(16B) | Type(1B) | ContentSize(4B) | Content(variable)
+    """
+    # --- Parse payload header ---
+    if len(payload) < 21:  # 16 + 1 + 4
+        print("Invalid payload length for 603")
+        send_response(conn, RES_MESSAGE_RECEIVED, b"")
+        return
+
+    to_client_id = payload[0:16]
+    msg_type = payload[16]
+    content_size = struct.unpack("<I", payload[17:21])[0]
+    content = payload[21 : 21 + content_size]
+
+    print(f"[603] Message from {client_id.hex()} to {to_client_id.hex()}")
+    print(f"       Type={msg_type}, ContentSize={content_size}")
+
+    # --- Optional debug output ---
+    if msg_type == MSG_TYPE_TEXT:
+        try:
+            text = content.decode(errors="ignore")
+            print(f"       Text message: {text}")
+        except Exception:
+            print("       (Failed to decode message content)")
+
+    elif msg_type == MSG_TYPE_REQUEST_SYM:
+        print("       Request for symmetric key")
+
+    elif msg_type == MSG_TYPE_SEND_SYM:
+        print("       Received symmetric key (RSA encrypted)")
+
+    elif msg_type == MSG_TYPE_FILE:
+        print("       File transfer (ignored for now)")
+
+    # Store or forward logic can go here later (bonus/extension)
+    # For now, just acknowledge message receipt.
+
+    send_response(conn, RES_MESSAGE_RECEIVED, b"")

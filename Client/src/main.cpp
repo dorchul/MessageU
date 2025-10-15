@@ -1,6 +1,7 @@
 #include "Connection.h"
 #include "Client.h"
 #include "Utils.h"
+#include "Protocol.h"
 
 #include <iostream>
 #include <vector>
@@ -31,8 +32,8 @@ int main() {
 
     Client client(conn);
 
-    std::string name = "Bob";
-
+    // You can change this name to "Alice" for the second run
+    std::string name = "Alice";
     std::vector<uint8_t> dummyKey(160, 0);
 
     std::cout << "Sending registration..." << std::endl;
@@ -56,10 +57,8 @@ int main() {
         std::cerr << "No clients received.\n";
     }
 
+    // Request public key for all other clients
     for (const auto& c : clients) {
-        // (no skip) – request public key for everyone, including yourself
-
-
         std::cout << "\nRequesting public key for " << c.second << "...\n";
         std::string targetUUID(reinterpret_cast<const char*>(c.first.data()), c.first.size());
         std::vector<uint8_t> pubKey = client.requestPublicKey(targetUUID);
@@ -70,6 +69,23 @@ int main() {
             std::cerr << "Failed to retrieve key for " << c.second << ".\n";
     }
 
+    // Send a test message to the first other client
+    for (const auto& c : clients) {
+        if (c.second == name) continue;
+
+        std::string msg = "Hello from " + name + "!";
+        std::vector<uint8_t> content(msg.begin(), msg.end());
+
+        std::cout << "\nSending message to " << c.second << "...\n";
+        if (client.sendMessage(c.first, MessageType::TEXT, content))
+            std::cout << "[OK] Message sent successfully.\n";
+        else
+            std::cout << "[ERR] Failed to send message.\n";
+
+        break; // send only once for testing
+    }
+
+    std::cout << "\nAll tests completed.\n";
     conn.closeConnection();
     return 0;
 }

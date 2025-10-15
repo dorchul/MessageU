@@ -21,6 +21,12 @@ RES_MESSAGE_RECEIVED = 2103
 RES_WAITING_MESSAGES = 2104
 RES_ERROR = 9000
 
+# ===== Message Types =====
+MSG_TYPE_REQUEST_SYM = 1   # request symmetric key
+MSG_TYPE_SEND_SYM    = 2   # send symmetric key (RSA-encrypted)
+MSG_TYPE_TEXT        = 3   # send text message (AES-encrypted)
+MSG_TYPE_FILE        = 4   # file transfer (bonus)
+
 # ===== Header Formats =====
 # Little endian: < means little-endian
 REQ_HEADER_FORMAT = "<16sBHI"   # ClientID(16B) | Version(1B) | Code(2B) | PayloadSize(4B)
