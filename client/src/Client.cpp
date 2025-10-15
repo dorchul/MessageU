@@ -5,31 +5,59 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
-#include <cstring>  // memset
+#include <cstring>
 #include <array>
 #include <vector>
+#include <filesystem>
 
-bool Client::doRegister(const std::string& name, const std::vector<uint8_t>& pubKey) {
-    if (pubKey.size() != 160) {
-        std::cerr << "Public key must be 160 bytes\n";
-        return false;
+bool Client::doRegister(const std::string& name, const std::string& dataDir)
+{
+    std::vector<uint8_t> pubKeyDER, privKeyDER;
+
+    // Ensure the folder exists
+    std::filesystem::create_directories(dataDir);
+
+    std::string mePath = dataDir + "/me.info";
+
+    if (!std::filesystem::exists(mePath)) {
+        std::cout << "[" << name << "] Generating RSA key pair...\n";
+        if (!Utils::generateRSA1024(privKeyDER, pubKeyDER)) {
+            std::cerr << "RSA generation failed\n";
+            return false;
+        }
+
+        std::array<uint8_t, 16> tmpId{}; // temporary UUID
+        if (!Utils::saveMeInfo(name, tmpId, privKeyDER, dataDir)) {
+            std::cerr << "Failed to save " << mePath << "\n";
+            return false;
+        }
+    }
+    else {
+        std::cout << "[" << name << "] Using existing " << mePath << "\n";
     }
 
-    m_name = name;
-    m_pubKey = pubKey;
+    if (pubKeyDER.empty()) {
+        std::cerr << "Warning: Public key is empty\n";
+        return false;
+    }
+    if (pubKeyDER.size() != 160) {
+        std::cout << "Warning: Public key size = " << pubKeyDER.size()
+            << " bytes, expected 160. Adjusting...\n";
+        pubKeyDER.resize(160, 0);
+    }
 
-    // Payload: NameLen(1) | Name | PublicKey(160)
-    std::vector<uint8_t> payload;
+    // --- Build registration payload ---
     if (name.size() > 255) {
         std::cerr << "Name too long\n";
         return false;
     }
 
+    std::vector<uint8_t> payload;
     payload.push_back(static_cast<uint8_t>(name.size()));
     payload.insert(payload.end(), name.begin(), name.end());
-    payload.insert(payload.end(), pubKey.begin(), pubKey.end());
+    payload.insert(payload.end(), pubKeyDER.begin(), pubKeyDER.end());
 
-    // Header
+    // --- Header ---
     RequestHeader hdr{};
     std::memset(hdr.clientID, 0, 16);
     hdr.version = VERSION;
@@ -39,7 +67,7 @@ bool Client::doRegister(const std::string& name, const std::vector<uint8_t>& pub
     if (!m_conn.sendAll(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr))) return false;
     if (!m_conn.sendAll(payload.data(), payload.size())) return false;
 
-    // Response
+    // --- Response ---
     ResponseHeader rh{};
     if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&rh), sizeof(rh))) return false;
     if (rh.version != VERSION ||
@@ -52,10 +80,14 @@ bool Client::doRegister(const std::string& name, const std::vector<uint8_t>& pub
 
     std::array<uint8_t, 16> id{};
     if (!m_conn.recvAll(id.data(), id.size())) return false;
-
     m_clientId = id;
-    return Utils::saveMeInfo(m_name, m_clientId, m_pubKey);
+
+    Utils::saveMeInfo(name, m_clientId, privKeyDER, dataDir);
+    std::cout << "[" << name << "] Registration complete. Client ID saved.\n";
+    return true;
 }
+
+
 
 std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClientsList() {
     using namespace Protocol;

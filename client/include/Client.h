@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "Protocol.h"
 
+
 class Connection;
 
 class Client {
@@ -13,7 +14,8 @@ public:
         : m_conn(conn) {}
 
     // REGISTER (600)
-    bool doRegister(const std::string& name, const std::vector<uint8_t>& pubKey);
+    bool doRegister(const std::string& name, const std::string& dataDir);
+
 
     // GET CLIENTS LIST (601)
     std::vector<std::pair<std::array<uint8_t, 16>, std::string>> requestClientsList();

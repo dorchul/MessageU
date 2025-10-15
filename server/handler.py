@@ -29,23 +29,36 @@ def send_response(conn, code, payload: bytes):
 
 # ===== 600 – Registration =====
 def handle_register(conn, payload: bytes):
+    # Payload: NameLen(1B) | Name | PublicKey(160B)
     if len(payload) < 1 + 160:
-        print("[REGISTER] Invalid payload.")
+        print("[REGISTER] Invalid payload (too short).")
         send_response(conn, RES_ERROR, b"")
         return
 
     name_len = payload[0]
-    name = payload[1:1 + name_len].decode(errors="ignore")
-    pubkey = payload[1 + name_len:1 + name_len + 160]
+    if len(payload) < 1 + name_len + 160:
+        print("[REGISTER] Invalid payload length vs name.")
+        send_response(conn, RES_ERROR, b"")
+        return
 
-    # Generate fake UUID for simplicity
+    name = payload[1:1 + name_len].decode("utf-8", errors="ignore")
+    pubkey = payload[1 + name_len : 1 + name_len + 160]
+
+    # Generate a 16-byte UUID
     import uuid
-    cid = uuid.uuid4().bytes
-    STATE["clients"][cid.hex()] = {"name": name, "pubkey": pubkey}
+    client_id = uuid.uuid4().bytes
+    client_hex = client_id.hex()
 
-    print(f"[REGISTER] {name} -> {cid.hex()}")
-    send_response(conn, 2100, cid)
+    # Store in server memory
+    STATE["clients"][client_hex] = {
+        "name": name,
+        "public_key": pubkey,
+    }
 
+    print(f"[REGISTER] {name} registered with UUID={client_hex}")
+
+    # Respond: 2100 + UUID(16B)
+    send_response(conn, 2100, client_id)
 
 # ===== 601 – Clients List =====
 def handle_get_clients_list(conn):
