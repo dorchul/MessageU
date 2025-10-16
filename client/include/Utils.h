@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <vector>
 #include <array>
@@ -15,14 +15,13 @@ namespace Utils {
         const std::vector<uint8_t>& privateKey,
         const std::string& dataDir);
 
+    // Load me.info (3 lines): Name, UUID hex (32), PrivateKey Base64
+    bool loadMeInfo(std::string& name,
+        std::array<uint8_t, 16>& uuid,
+        std::vector<uint8_t>& privateKey,
+        const std::string& dataDir);
 
     // UUID array -> lowercase hex
     std::string uuidToHex(const std::array<uint8_t, 16>& uuid);
 
-    // NEW: Generate RSA-1024. Returns DER bytes:
-    // - privateKeyDER: PKCS#1 DER (no PEM headers)
-    // - publicKeyDER: X.509 SubjectPublicKeyInfo (DER)
-    // Returns true on success.
-    bool generateRSA1024(std::vector<uint8_t>& privateKeyDER,
-        std::vector<uint8_t>& publicKeyDER);
 }

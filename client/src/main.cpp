@@ -1,43 +1,52 @@
-#include "Connection.h"
-#include "Client.h"
+﻿#include "Client.h"
 #include "Utils.h"
-#include "Protocol.h"
 #include <iostream>
-#include <vector>
-#include <string>
-#include <iomanip>
-#include <thread>
-#include <chrono>
+#include "Connection.h"
 
-static void printDivider(const std::string& title) {
-    std::cout << "\n================ " << title << " ================\n";
-}
+int main()
+{
+    try {
+        std::string name = "Bob";          // change to "Alice" for second test
+        std::string dataDir = "data_bob";  // or "data_alice"
 
-int main() {
-    std::string ip;
-    uint16_t port;
+        // Read server info (IP:PORT)
+        std::string ip;
+        uint16_t port;
+        if (!Utils::readServerInfo(ip, port)) {
+            std::cerr << "Failed to read data/server.info\n";
+            return 1;
+        }
 
-    if (!Utils::readServerInfo(ip, port)) {
-        std::cerr << "Failed to read server.info\n";
+        // Connect to server
+        Connection conn;
+        if (!conn.connectToServer(ip, port)) {
+            std::cerr << "Failed to connect to server\n";
+            return 1;
+        }
+
+        // Create client (loads me.info if exists)
+        Client client(conn, dataDir);
+
+        std::cout << "================ Registration ================\n";
+        if (!client.doRegister(name, dataDir))
+            return 1;
+
+        std::cout << "================ Clients List ================\n";
+        auto clients = client.requestClientsList();
+        if (clients.empty()) {
+            std::cout << "No clients returned.\n";
+        }
+        else {
+            for (const auto& [uuid, cname] : clients) {
+                std::cout << "- " << cname
+                    << " (" << Utils::uuidToHex(uuid) << ")\n";
+            }
+        }
+
+        return 0;
+    }
+    catch (const std::exception& ex) {
+        std::cerr << "Exception: " << ex.what() << "\n";
         return 1;
     }
-
-    // ===== Create two separate connections =====
-    Connection connBob;
-
-    if (!connBob.connectToServer(ip, port)) {
-        std::cerr << "Failed to connect client.\n";
-        return 1;
-    }
-
-    Client bob(connBob);
-
-    // ===== 600: Register both =====
-    printDivider("Registration");
-
-    std::cout << "[Bob] Registering...\n";
-    if (!bob.doRegister("Bob", "data_bob")) return 1;
-
-    connBob.closeConnection();
-    return 0;
 }

@@ -5,7 +5,8 @@ from protocol import (
     REQ_REGISTER,
     REQ_CLIENTS_LIST,
     REQ_PUBLIC_KEY,
-    REQ_SEND_MESSAGE, 
+    REQ_SEND_MESSAGE,
+    REQ_WAITING_MESSAGES,
     RES_ERROR
 )
 from handler import (
@@ -44,30 +45,29 @@ def handle_client(conn, addr):
             if not data:
                 break
 
-            client_id, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
-            print(f"[HEADER] Version={version}, Code={code}, PayloadSize={payload_size}")
-
+            client_id_bytes, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
+            client_id_hex = client_id_bytes.hex()
             payload = recv_exact(conn, payload_size) if payload_size > 0 else b''
 
             if code == REQ_REGISTER:
                 handle_register(conn, payload)
             elif code == REQ_CLIENTS_LIST:
-                handle_get_clients_list(conn)
+                handle_get_clients_list(conn, client_id_hex)
             elif code == REQ_PUBLIC_KEY:
                 handle_get_public_key(conn, payload)
             elif code == REQ_SEND_MESSAGE:
-                handle_send_message(conn, client_id, payload, STATE)
-            elif code == 604:
-                handle_get_waiting_messages(conn, client_id, payload, STATE)
+                handle_send_message(conn, client_id_bytes, payload)
+            elif code == REQ_WAITING_MESSAGES:
+                handle_get_waiting_messages(conn, client_id_bytes, payload)
             else:
                 send_response(conn, RES_ERROR, b'unknown code')
-
 
     except Exception as e:
         print(f"[ERROR] {e}")
     finally:
         conn.close()
         print(f"[-] Disconnected: {addr}")
+
 
 import threading
 

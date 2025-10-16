@@ -7,13 +7,8 @@
 #include <vector>
 #include <array>
 #include <filesystem>
+#include <iostream>
 
-#include <cryptopp/osrng.h>
-#include <cryptopp/rsa.h>
-#include <cryptopp/queue.h>
-#include <cryptopp/cryptlib.h>
-#include <cryptopp/sha.h>
-#include <cryptopp/secblock.h>
 
 // ===== Base64 (encode only, single-line) =====
 static const char* B64CHARS =
@@ -68,7 +63,7 @@ namespace Utils {
     }
 
     // =====================
-    // me.info (spec: 3 lines)
+    // me.info
     // =====================
     bool saveMeInfo(const std::string& name,
         const std::array<uint8_t, 16>& id,
@@ -89,13 +84,55 @@ namespace Utils {
             << static_cast<int>(b);
         f << uuidHex.str() << "\n";
 
-        // 3. Private key base64
+        // 3. Private key base64 (DER)
         std::string priv64 = base64Encode(privateKey.data(), privateKey.size());
         f << priv64 << "\n";
 
         return true;
     }
 
+    bool Utils::loadMeInfo(std::string& name,
+        std::array<uint8_t, 16>& uuid,
+        std::vector<uint8_t>& privateKey,
+        const std::string& dataDir)
+    {
+        std::ifstream f(dataDir + "/me.info");
+        if (!f.is_open()) return false;
+
+        std::string uuidHex, priv64;
+        if (!std::getline(f, name)) return false;
+        if (!std::getline(f, uuidHex)) return false;
+        if (!std::getline(f, priv64)) return false;
+
+        // Parse UUID hex → bytes
+        if (uuidHex.size() != 32) return false;
+        for (size_t i = 0; i < 16; ++i) {
+            std::string byteStr = uuidHex.substr(i * 2, 2);
+            uuid[i] = static_cast<uint8_t>(std::stoi(byteStr, nullptr, 16));
+        }
+
+        // Decode base64 private key
+        auto decode64 = [](const std::string& in) -> std::vector<uint8_t> {
+            static const std::string chars =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::vector<uint8_t> out;
+            int val = 0, valb = -8;
+            for (unsigned char c : in) {
+                if (isspace(c) || c == '=') continue;
+                int idx = chars.find(c);
+                if (idx == std::string::npos) break;
+                val = (val << 6) + idx;
+                valb += 6;
+                if (valb >= 0) {
+                    out.push_back(uint8_t((val >> valb) & 0xFF));
+                    valb -= 8;
+                }
+            }
+            return out;
+        };
+        privateKey = decode64(priv64);
+        return true;
+    }
 
     // =====================
     // UUID -> hex string
@@ -108,52 +145,5 @@ namespace Utils {
         return oss.str();
     }
 
-    // =====================
-    // RSA key generation (Crypto++)
-    // =====================
-
-    bool generateRSA1024(std::vector<uint8_t>& privateKeyDER,
-        std::vector<uint8_t>& publicKeyDER) {
-        try {
-            CryptoPP::AutoSeededRandomPool rng;
-
-            // Generate keypair
-            CryptoPP::InvertibleRSAFunction params;
-            params.GenerateRandomWithKeySize(rng, 1024);
-
-            CryptoPP::RSA::PrivateKey priv(params);
-            CryptoPP::RSA::PublicKey pub(params);
-
-            // ---- Private key (PKCS#1 DER) ----
-            {
-                CryptoPP::ByteQueue q;
-                priv.Save(q);
-                privateKeyDER.resize((size_t)q.CurrentSize());
-                q.Get(privateKeyDER.data(), privateKeyDER.size());
-            }
-
-            // ---- Public key (X.509 DER → truncated/padded to 160B) ----
-            {
-                CryptoPP::ByteQueue q;
-                pub.Save(q);
-                std::vector<uint8_t> der;
-                der.resize((size_t)q.CurrentSize());
-                q.Get(der.data(), der.size());
-
-                // If longer than 160B, take the first 160; if shorter, pad with zeros
-                publicKeyDER = der;
-                if (publicKeyDER.size() > 160)
-                    publicKeyDER.resize(160);
-                else if (publicKeyDER.size() < 160)
-                    publicKeyDER.insert(publicKeyDER.end(), 160 - publicKeyDER.size(), 0);
-            }
-
-            return true;
-        }
-        catch (const std::exception& e) {
-            std::cerr << "generateRSA1024() failed: " << e.what() << std::endl;
-            return false;
-        }
-    }
 
 } // namespace Utils

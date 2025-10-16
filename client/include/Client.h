@@ -3,15 +3,31 @@
 #include <vector>
 #include <array>
 #include <cstdint>
+
 #include "Protocol.h"
+#include "Utils.h"
+#include "AESWrapper.h"
+#include "Base64Wrapper.h"
+#include "RSAWrapper.h"
 
 
 class Connection;
 
 class Client {
 public:
-    explicit Client(Connection& conn)
-        : m_conn(conn) {}
+    explicit Client(Connection& conn, const std::string& dataDir)
+        : m_conn(conn)
+    {
+        std::string name;
+        std::vector<uint8_t> privKey;
+        if (Utils::loadMeInfo(name, m_clientId, privKey, dataDir)) {
+            std::cout << "[Client] Loaded UUID from " << dataDir << "/me.info\n";
+        }
+        else {
+            std::memset(m_clientId.data(), 0, 16);
+            std::cout << "[Client] No existing identity found.\n";
+        }
+    }
 
     // REGISTER (600)
     bool doRegister(const std::string& name, const std::string& dataDir);

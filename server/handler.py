@@ -1,8 +1,12 @@
 import struct
+import uuid
+
 from protocol import (
     RES_ERROR,
+    RES_CLIENTS_LIST,
     RES_MESSAGE_RECEIVED,
     RES_WAITING_MESSAGES,
+    RES_REGISTRATION_OK,
     MSG_TYPE_REQUEST_SYM,
     MSG_TYPE_SEND_SYM,
     MSG_TYPE_TEXT,
@@ -17,58 +21,42 @@ STATE = {
 }
 
 def send_response(conn, code, payload: bytes):
-    try:
-        header = struct.pack("<BHI", 1, code, len(payload))
-        conn.sendall(header)
-        if payload:
-            conn.sendall(payload)
-        print(f"[SEND_RESPONSE] Code={code}, PayloadSize={len(payload)} sent.")
-    except Exception as e:
-        print(f"[SEND_RESPONSE ERROR] {e}")
+    header = struct.pack("<BHI", 1, code, len(payload))
+    conn.sendall(header)
+    if payload:
+        conn.sendall(payload)
+    print(f"[SEND_RESPONSE] Code={code}, PayloadSize={len(payload)} sent.")
 
-
-# ===== 600 – Registration =====
-def handle_register(conn, payload: bytes):
-    # Payload: NameLen(1B) | Name | PublicKey(160B)
+def handle_register(conn, payload):
     if len(payload) < 1 + 160:
-        print("[REGISTER] Invalid payload (too short).")
-        send_response(conn, RES_ERROR, b"")
+        send_response(conn, RES_ERROR, b'invalid register payload')
         return
 
     name_len = payload[0]
-    if len(payload) < 1 + name_len + 160:
-        print("[REGISTER] Invalid payload length vs name.")
-        send_response(conn, RES_ERROR, b"")
-        return
+    name = payload[1:1 + name_len].decode('ascii')
+    pubkey = payload[1 + name_len:1 + name_len + 160]
 
-    name = payload[1:1 + name_len].decode("utf-8", errors="ignore")
-    pubkey = payload[1 + name_len : 1 + name_len + 160]
-
-    # Generate a 16-byte UUID
-    import uuid
     client_id = uuid.uuid4().bytes
-    client_hex = client_id.hex()
+    client_id_hex = client_id.hex()
 
-    # Store in server memory
-    STATE["clients"][client_hex] = {
-        "name": name,
-        "public_key": pubkey,
-    }
+    STATE["clients"][client_id_hex] = {"name": name, "pubkey": pubkey}
+    print(f"[REGISTER] Added {name} ({client_id_hex}), total {len(STATE['clients'])}")
 
-    print(f"[REGISTER] {name} registered with UUID={client_hex}")
+    send_response(conn, RES_REGISTRATION_OK, client_id)
 
-    # Respond: 2100 + UUID(16B)
-    send_response(conn, 2100, client_id)
+def handle_get_clients_list(conn, requester_hex):
+    print(f"[CLIENTS LIST] STATE has {len(STATE['clients'])} clients")
+    visible = [(cid_hex, info) for cid_hex, info in STATE["clients"].items()
+               if cid_hex != requester_hex]
 
-# ===== 601 – Clients List =====
-def handle_get_clients_list(conn):
-    print("[CLIENTS LIST] Returning", len(STATE["clients"]), "clients")
-    payload = struct.pack("<H", len(STATE["clients"]))
-    for cid_hex, info in STATE["clients"].items():
+    payload = struct.pack("<H", len(visible))
+    for cid_hex, info in visible:
         cid_bytes = bytes.fromhex(cid_hex)
-        name_bytes = info["name"].encode()
-        payload += cid_bytes + struct.pack("B", len(name_bytes)) + name_bytes
-    send_response(conn, 2101, payload)
+        name_bytes = info["name"].encode('ascii')
+        name_padded = name_bytes + b'\x00' * (255 - len(name_bytes))
+        payload += cid_bytes + name_padded
+
+    send_response(conn, RES_CLIENTS_LIST, payload)
 
 
 # ===== 602 – Public Key =====
