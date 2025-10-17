@@ -11,7 +11,6 @@ from protocol import (
     MSG_TYPE_REQUEST_SYM,
     MSG_TYPE_SEND_SYM,
     MSG_TYPE_TEXT,
-    MSG_TYPE_FILE,
 )
 
 # ===== Global State =====
@@ -88,56 +87,92 @@ def handle_get_public_key(conn, payload: bytes):
     print(f"[PUBLIC KEY] Sent key for {STATE['clients'][cid_hex]['name']}")
 
 
-
 # ===== 603 – Send Message =====
-def handle_send_message(conn, client_id: bytes, payload: bytes, state):
-    if len(payload) < 21:
-        print("[603] Invalid payload length.")
+def handle_send_message(conn, payload: bytes, header):
+    try:
+        if len(payload) < 21:
+            print("[SEND MESSAGE] Payload too short.")
+            send_response(conn, RES_ERROR, b"")
+            return
+
+        to_uuid = payload[0:16].hex()
+        msg_type = payload[16]
+        content_size = int.from_bytes(payload[17:21], "little")
+        if len(payload) != 21 + content_size:
+            print(f"[SEND MESSAGE] Invalid payload size. Declared={content_size}, actual={len(payload)-21}")
+            send_response(conn, RES_ERROR, b"")
+            return
+
+        content = payload[21:]
+        from_uuid = header["client_id"]
+
+        if to_uuid not in STATE["clients"]:
+            print(f"[SEND MESSAGE] Destination {to_uuid} not found.")
+            send_response(conn, RES_ERROR, b"")
+            return
+
+        if to_uuid not in STATE["pending"]:
+            STATE["pending"][to_uuid] = []
+
+        # assign id = 1 + current count for that recipient
+        message_id = len(STATE["pending"][to_uuid]) + 1
+
+        # --- Store message ---
+        content_size = len(content)
+        STATE["pending"][to_uuid].append((from_uuid, message_id, msg_type, content_size, content))
+
+
+        print(f"[SEND MESSAGE] Stored msg#{message_id} from {from_uuid[:8]} → {to_uuid[:8]} "
+              f"(type={msg_type}, size={content_size})")
+
+        # 2103 payload = toClientID(16) | messageID(4, LE)
+        response_payload = bytes.fromhex(to_uuid) + message_id.to_bytes(4, "little")
+        send_response(conn, RES_MESSAGE_RECEIVED, response_payload)
+
+    except Exception as e:
+        print(f"[SEND MESSAGE] Exception: {e}")
         send_response(conn, RES_ERROR, b"")
-        return
 
-    to_client_id = payload[0:16]
-    msg_type = payload[16]
-    content_size = struct.unpack("<I", payload[17:21])[0]
-    content = payload[21:21 + content_size]
-
-    print(f"[603] Message from {client_id.hex()} to {to_client_id.hex()}")
-    print(f"     Type={msg_type}, ContentSize={content_size}")
-
-    # Debug text output
-    if msg_type == MSG_TYPE_TEXT:
-        try:
-            text = content.decode(errors="ignore")
-            print(f"     Text message: {text}")
-        except Exception:
-            print("     (Failed to decode message content)")
-
-    # Store pending message
-    to_hex = to_client_id.hex()
-    msg_record = (client_id.hex(), msg_type, content)
-    state.setdefault("pending", {})
-    state["pending"].setdefault(to_hex, []).append(msg_record)
-    print(f"     Stored message for {to_hex}. Pending count: {len(state['pending'][to_hex])}")
-
-    send_response(conn, RES_MESSAGE_RECEIVED, b"")
 
 
 # ===== 604 – Get Waiting Messages =====
-def handle_get_waiting_messages(conn, client_id: bytes, payload: bytes, state):
-    hex_id = client_id.hex()
-    pending = state.get("pending", {}).get(hex_id, [])
-    print(f"[604] {len(pending)} waiting messages for {hex_id}")
+def handle_get_waiting_messages(conn, payload: bytes, header):
+    try:
+        client_uuid = header["client_id"]
 
-    response = b''
-    for from_id_hex, mtype, content in pending:
-        part = bytes.fromhex(from_id_hex)
-        part += struct.pack("<B", mtype)
-        part += struct.pack("<I", len(content))
-        part += content
-        response += part
+        # Verify this client exists
+        if client_uuid not in STATE["clients"]:
+            print(f"[GET WAITING] Unknown client {client_uuid}")
+            send_response(conn, RES_ERROR, b"")
+            return
 
-    # Clear delivered messages
-    if hex_id in state.get("pending", {}):
-        state["pending"][hex_id].clear()
+        # No messages waiting
+        if client_uuid not in STATE["pending"] or not STATE["pending"][client_uuid]:
+            print(f"[GET WAITING] No pending messages for {client_uuid[:8]}")
+            send_response(conn, RES_WAITING_MESSAGES, b"")  # empty payload allowed
+            return
 
-    send_response(conn, 2104, response)
+        messages = STATE["pending"][client_uuid]
+        payload_bytes = bytearray()
+
+        for (from_uuid, msg_id, msg_type, msg_size, content) in messages:
+            payload_bytes += bytes.fromhex(from_uuid)
+            payload_bytes += msg_id.to_bytes(4, "little")
+            payload_bytes += msg_type.to_bytes(1, "little")
+            payload_bytes += msg_size.to_bytes(4, "little")
+            payload_bytes += content
+
+            print(f"[GET WAITING] → msg#{msg_id} from {from_uuid[:8]} "
+                  f"(type={msg_type}, size={msg_size})")
+
+        # Clear the list after sending
+        STATE["pending"][client_uuid] = []
+
+        # Send combined payload
+        send_response(conn, RES_WAITING_MESSAGES, bytes(payload_bytes))
+        print(f"[GET WAITING] Sent {len(messages)} messages to {client_uuid[:8]}")
+
+    except Exception as e:
+        print(f"[GET WAITING] Exception: {e}")
+        send_response(conn, RES_ERROR, b"")
+

@@ -16,7 +16,6 @@ from handler import (
     handle_send_message, 
     send_response,
     handle_get_waiting_messages,
-    STATE
 )
 
 VERSION = 1
@@ -51,16 +50,24 @@ def handle_client(conn, addr):
 
             if code == REQ_REGISTER:
                 handle_register(conn, payload)
+
             elif code == REQ_CLIENTS_LIST:
                 handle_get_clients_list(conn, client_id_hex)
+
             elif code == REQ_PUBLIC_KEY:
                 handle_get_public_key(conn, payload)
+
             elif code == REQ_SEND_MESSAGE:
-                handle_send_message(conn, client_id_bytes, payload)
+                header = {"client_id": client_id_hex, "version": version, "code": code}
+                handle_send_message(conn, payload, header)
+
             elif code == REQ_WAITING_MESSAGES:
-                handle_get_waiting_messages(conn, client_id_bytes, payload)
+                header = {"client_id": client_id_hex, "version": version, "code": code}
+                handle_get_waiting_messages(conn, payload, header)
+
             else:
-                send_response(conn, RES_ERROR)
+                send_response(conn, RES_ERROR, b"")
+
 
     except Exception as e:
         print(f"[ERROR] {e}")
