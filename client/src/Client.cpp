@@ -11,6 +11,9 @@
 #include <vector>
 #include <filesystem>
 
+// ===============================
+// Register (600 → 2100)
+// ===============================
 bool Client::doRegister(const std::string& name, const std::string& dataDir)
 {
     std::filesystem::create_directories(dataDir);
@@ -42,11 +45,10 @@ bool Client::doRegister(const std::string& name, const std::string& dataDir)
         return false;
     }
 
-    // Build payload: [NameLen][Name][PubKey(160)]
-    std::vector<uint8_t> payload;
-    payload.push_back(static_cast<uint8_t>(name.size()));
-    payload.insert(payload.end(), name.begin(), name.end());
-    payload.insert(payload.end(), pubKeyDER.begin(), pubKeyDER.end());
+    // Build payload: [Name (255 bytes, null-terminated)] + [PublicKey (160 bytes)]
+    std::vector<uint8_t> payload(255 + 160, 0);
+    std::memcpy(payload.data(), name.c_str(), std::min<size_t>(name.size() + 1, 255));
+    std::memcpy(payload.data() + 255, pubKeyDER.data(), 160);
 
     // Header
     RequestHeader hdr{};
@@ -90,7 +92,7 @@ bool Client::doRegister(const std::string& name, const std::string& dataDir)
 
 
 // ===============================
-// Clients list (601 → 2101)
+// Request Clients list (601 → 2101)
 // ===============================
 std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClientsList()
 {
@@ -131,19 +133,20 @@ std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClie
     if (!m_conn.recvAll(payload.data(), size))
         return clients;
 
-    if (size < 2) return clients; // at least the count field
-
-    uint16_t count = payload[0] | (payload[1] << 8);
-    size_t offset = 2;
-
-    // ===== Parse client entries =====
     const size_t entrySize = 16 + 255;
-    for (uint16_t i = 0; i < count && offset + entrySize <= size; ++i) {
+    if (size % entrySize != 0) {
+        std::cerr << "Invalid clients list size.\n";
+        return clients;
+    }
+
+    uint16_t count = static_cast<uint16_t>(size / entrySize);
+    size_t offset = 0;
+
+    for (uint16_t i = 0; i < count; ++i) {
         std::array<uint8_t, 16> uuid{};
         memcpy(uuid.data(), payload.data() + offset, 16);
         offset += 16;
 
-        // Extract name (255 bytes, null-terminated)
         std::string rawName(reinterpret_cast<char*>(payload.data() + offset), 255);
         size_t nullPos = rawName.find('\0');
         std::string name = (nullPos != std::string::npos) ? rawName.substr(0, nullPos) : rawName;
@@ -152,37 +155,48 @@ std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClie
         clients.emplace_back(uuid, name);
     }
 
+
     return clients;
 }
-
 
 // ===============================
 // Request Public Key (602 → 2102)
 // ===============================
-std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUID)
+
+std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
 {
     using namespace Protocol;
 
-    if (targetUUID.size() != 16) {
-        std::cerr << "Invalid UUID length.\n";
+    // Convert hex UUID → 16-byte array
+    if (targetUUIDHex.size() != 32) {
+        std::cerr << "Invalid UUID hex length.\n";
         return {};
     }
 
+    std::array<uint8_t, 16> targetUUID{};
+    for (size_t i = 0; i < 16; ++i) {
+        std::string byteStr = targetUUIDHex.substr(i * 2, 2);
+        targetUUID[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
+    }
+
+    // Build header
     RequestHeader header{};
     memcpy(header.clientID, m_clientId.data(), 16);
     header.version = VERSION;
     header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_PUBLIC_KEY));
     header.payloadSize = toLittleEndian32(16);
 
-    std::vector<uint8_t> buffer(sizeof(header) + 16);
-    memcpy(buffer.data(), &header, sizeof(header));
-    memcpy(buffer.data() + sizeof(header), targetUUID.data(), 16);
-
-    if (!m_conn.sendAll(buffer.data(), buffer.size())) {
-        std::cerr << "Failed to send request.\n";
+    // Send header + payload (16-byte target UUID)
+    if (!m_conn.sendAll(reinterpret_cast<const uint8_t*>(&header), sizeof(header))) {
+        std::cerr << "Failed to send header.\n";
+        return {};
+    }
+    if (!m_conn.sendAll(targetUUID.data(), 16)) {
+        std::cerr << "Failed to send payload.\n";
         return {};
     }
 
+    // Receive response
     ResponseHeader resp{};
     if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp)))
         return {};
@@ -194,22 +208,25 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUID)
         std::cout << "Server responded with an error.\n";
         return {};
     }
-    if (code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) || size != 160) {
-        std::cerr << "Unexpected response.\n";
+    if (code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) || size != 176) {
+        std::cerr << "Unexpected response (" << code << ", size=" << size << ").\n";
         return {};
     }
 
-    std::vector<uint8_t> pubKey(size);
-    if (!m_conn.recvAll(pubKey.data(), size))
+    // Receive 176 bytes (UUID + key)
+    std::vector<uint8_t> buffer(size);
+    if (!m_conn.recvAll(buffer.data(), size))
         return {};
 
+    // Extract public key (last 160 bytes)
+    std::vector<uint8_t> pubKey(buffer.begin() + 16, buffer.end());
     return pubKey;
 }
 
-// ===============================
+// ==========================
 // Send Message (603 → 2103)
 // Handles type 1–2–3
-// ===============================
+// ==========================
 bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     MessageType type,
     const std::vector<uint8_t>& content)
@@ -276,9 +293,9 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     return true;
 }
 
-// ===============================
-// Get Waiting Messages (604 → 2104)
-// ===============================
+// =====================================
+// Request Waiting Messages (604 → 2104)
+// =====================================
 void Client::requestWaitingMessages()
 {
     using namespace Protocol;

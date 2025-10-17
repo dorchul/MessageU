@@ -60,7 +60,7 @@ def handle_client(conn, addr):
             elif code == REQ_WAITING_MESSAGES:
                 handle_get_waiting_messages(conn, client_id_bytes, payload)
             else:
-                send_response(conn, RES_ERROR, b'unknown code')
+                send_response(conn, RES_ERROR)
 
     except Exception as e:
         print(f"[ERROR] {e}")
