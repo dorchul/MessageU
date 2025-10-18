@@ -12,7 +12,7 @@
 #include <filesystem>
 
 
-static const bool VERBOSE = false;
+static const bool VERBOSE = true;
 
 // ===============================
 // Register (600 → 2100)
@@ -95,7 +95,6 @@ bool Client::doRegister(const std::string& name, const std::string& dataDir)
 }
 
 
-
 // ===============================
 // Request Clients list (601 → 2101)
 // ===============================
@@ -164,10 +163,10 @@ std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClie
     return clients;
 }
 
+
 // ===============================
 // Request Public Key (602 → 2102)
 // ===============================
-
 std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
 {
     using namespace Protocol;
@@ -228,18 +227,10 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
     return pubKey;
 }
 
-// ==========================
-// Send Message (603 → 2103)
-// Handles type 1–2–3
-// ==========================
-#include <fstream>
-#include <sstream>
-#include <iomanip>
-#include <filesystem>
 
 // ==========================
 // Send Message (603 → 2103)
-// Handles type 1–2–3 with real crypto
+// Handles type 1–2–3 (RAM-only symmetric keys)
 // ==========================
 bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     MessageType type,
@@ -249,10 +240,11 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
 
     auto uuidToHex = [](const std::array<uint8_t, 16>& id) {
         std::ostringstream oss;
-        for (auto b : id) oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
+        for (auto b : id)
+            oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
         return oss.str();
     };
-
+    const std::string targetHex = uuidToHex(toClient);
     std::vector<uint8_t> finalContent;
 
     if (type == MessageType::REQUEST_SYM) {
@@ -267,55 +259,35 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
         AESWrapper::GenerateKey(rawKey, AESWrapper::DEFAULT_KEYLENGTH);
 
         // 2) Fetch recipient public key via 602
-        const std::string targetHex = uuidToHex(toClient);
         std::vector<uint8_t> pubKey = requestPublicKey(targetHex);
         if (pubKey.size() != RSAPublicWrapper::KEYSIZE) {
             std::cerr << "Invalid recipient public key size (" << pubKey.size() << ").\n";
             return false;
         }
 
-        // 3) RSA-encrypt the AES key
+        // 3) RSA-encrypt AES key
         RSAPublicWrapper rsa(reinterpret_cast<const char*>(pubKey.data()),
             static_cast<unsigned int>(pubKey.size()));
         std::string enc = rsa.encrypt(reinterpret_cast<const char*>(rawKey),
             AESWrapper::DEFAULT_KEYLENGTH);
-
         finalContent.assign(enc.begin(), enc.end());
 
-        // 4) Persist symmetric key locally for this peer (used by Type 3)
-        try {
-            std::filesystem::create_directories("data/symmkeys");
-            const std::string keyPath = "data/symmkeys/" + targetHex + ".bin";
-            std::ofstream ofs(keyPath, std::ios::binary | std::ios::trunc);
-            ofs.write(reinterpret_cast<const char*>(rawKey), AESWrapper::DEFAULT_KEYLENGTH);
-            ofs.close();
-            if (VERBOSE) std::cout << "[603/Type 2] Saved symmetric key to " << keyPath << "\n";
-        }
-        catch (...) {
-            std::cerr << "Failed to save the symmetric key locally.\n";
-            return false;
-        }
+        // 4) Store symmetric key in RAM
+        std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
+        std::memcpy(key.data(), rawKey, AESWrapper::DEFAULT_KEYLENGTH);
+        m_symmKeys[targetHex] = key;
+        if (VERBOSE) std::cout << "[603/Type 2] AES key cached in memory.\n";
     }
     else if (type == MessageType::TEXT) {
         if (VERBOSE) std::cout << "[603/Type 3] Encrypting plaintext with stored symmetric key...\n";
 
-        // Load symmetric key we previously saved for this peer
-        const std::string targetHex = uuidToHex(toClient);
-        const std::string keyPath = "data/symmkeys/" + targetHex + ".bin";
-        unsigned char rawKey[AESWrapper::DEFAULT_KEYLENGTH]{};
-
-        std::ifstream ifs(keyPath, std::ios::binary);
-        if (!ifs.good()) {
-            std::cerr << "No symmetric key for this peer. Send Type 2 first. (" << keyPath << ")\n";
-            return false;
-        }
-        ifs.read(reinterpret_cast<char*>(rawKey), AESWrapper::DEFAULT_KEYLENGTH);
-        if (ifs.gcount() != AESWrapper::DEFAULT_KEYLENGTH) {
-            std::cerr << "Corrupted symmetric key file.\n";
+        auto it = m_symmKeys.find(targetHex);
+        if (it == m_symmKeys.end()) {
+            std::cerr << "No symmetric key in memory for this peer. Send Type 2 first.\n";
             return false;
         }
 
-        AESWrapper aes(rawKey, AESWrapper::DEFAULT_KEYLENGTH);
+        AESWrapper aes(it->second.data(), AESWrapper::DEFAULT_KEYLENGTH);
         std::string cipher = aes.encrypt(reinterpret_cast<const char*>(content.data()),
             static_cast<unsigned int>(content.size()));
         finalContent.assign(cipher.begin(), cipher.end());
@@ -348,7 +320,7 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     const uint32_t payloadSize = fromLittleEndian32(resp.payloadSize);
 
     if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
-        if (VERBOSE) std::cout << "Server responded with an error.\n";
+        std::cout << "Server responded with an error.\n";
         if (payloadSize > 0) {
             std::vector<uint8_t> drain(payloadSize);
             m_conn.recvAll(drain.data(), payloadSize);
@@ -433,3 +405,73 @@ std::vector<PendingMessage> Client::requestWaitingMessages()
 }
 
 
+// ===============================
+// Decode and process waiting messages
+// ===============================
+std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMessage>& msgs)
+{
+    std::vector<DecodedMessage> results;
+    if (msgs.empty()) return results;
+
+    for (const auto& msg : msgs) {
+        DecodedMessage out;
+        out.fromHex = Utils::uuidToHex(msg.fromId);
+        out.type = static_cast<MessageType>(msg.type);
+
+        try {
+            if (msg.type == (uint8_t)MessageType::SEND_SYM) {
+                // Decrypt the AES key using private RSA
+                std::string name;
+                std::array<uint8_t, 16> uuid{};
+                std::vector<uint8_t> priv;
+                if (!Utils::loadMeInfo(name, uuid, priv, "data/user")) {
+                    out.text = "(Cannot load private key)";
+                    results.push_back(out);
+                    continue;
+                }
+
+                RSAPrivateWrapper rsa((const char*)priv.data(), (unsigned int)priv.size());
+                std::string plain = rsa.decrypt((const char*)msg.content.data(),
+                    (unsigned int)msg.content.size());
+                if (plain.size() != AESWrapper::DEFAULT_KEYLENGTH) {
+                    out.text = "(Invalid AES key size)";
+                    results.push_back(out);
+                    continue;
+                }
+
+                // Cache AES key in memory
+                std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
+                std::memcpy(key.data(), plain.data(), AESWrapper::DEFAULT_KEYLENGTH);
+                m_symmKeys[out.fromHex] = key;
+                out.text = "[AES key cached in memory]";
+            }
+            else if (msg.type == (uint8_t)MessageType::TEXT) {
+                // Decrypt text using cached AES key
+                auto it = m_symmKeys.find(out.fromHex);
+                if (it == m_symmKeys.end()) {
+                    out.text = "(No AES key in memory for sender)";
+                    results.push_back(out);
+                    continue;
+                }
+
+                AESWrapper aes(it->second.data(), AESWrapper::DEFAULT_KEYLENGTH);
+                std::string plain = aes.decrypt((const char*)msg.content.data(),
+                    (unsigned int)msg.content.size());
+                out.text = plain;
+            }
+            else if (msg.type == (uint8_t)MessageType::REQUEST_SYM) {
+                out.text = "[Request for symmetric key]";
+            }
+            else {
+                out.text = "(Unknown message type)";
+            }
+        }
+        catch (...) {
+            out.text = "(Decryption failed)";
+        }
+
+        results.push_back(out);
+    }
+
+    return results;
+}

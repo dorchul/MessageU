@@ -24,4 +24,8 @@ namespace Utils {
     // UUID array -> lowercase hex
     std::string uuidToHex(const std::array<uint8_t, 16>& uuid);
 
+    // Hex string (32 chars) → UUID array (16 bytes)
+    std::array<uint8_t, 16> hexToUUID(const std::string& hex);
+
+
 }
