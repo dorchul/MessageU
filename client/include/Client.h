@@ -45,6 +45,7 @@ public:
         std::string name;
         std::vector<uint8_t> privKey;
         if (Utils::loadMeInfo(name, m_clientId, privKey, dataDir)) {
+            m_name = name;
             std::cout << "[Client] Loaded UUID from " << dataDir << "/me.info\n\n";
         }
         else {

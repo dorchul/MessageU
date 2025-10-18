@@ -1,6 +1,8 @@
 import struct
 import uuid
 
+from protocol import pack_response_header
+
 from protocol import (
     RES_ERROR,
     RES_CLIENTS_LIST,
@@ -8,10 +10,12 @@ from protocol import (
     RES_MESSAGE_RECEIVED,
     RES_WAITING_MESSAGES,
     RES_REGISTRATION_OK,
-    MSG_TYPE_REQUEST_SYM,
-    MSG_TYPE_SEND_SYM,
-    MSG_TYPE_TEXT,
 )
+
+VERBOSE = True
+def log(msg):
+    if VERBOSE:
+        print(msg)
 
 # ===== Global State =====
 # Holds clients and their pending messages
@@ -21,14 +25,14 @@ STATE = {
 }
 
 def send_response(conn, code, payload: bytes = b""):
-    # Enforce spec: 9000 must have empty payload
     if code == RES_ERROR:
         payload = b""
-    header = struct.pack("<BHI", 1, code, len(payload))
+    header = pack_response_header(code, len(payload))
     conn.sendall(header)
     if payload:
         conn.sendall(payload)
-    print(f"[SEND_RESPONSE] Code={code}, PayloadSize={len(payload)} sent.")
+    log(f"[SEND_RESPONSE] Code={code}, PayloadSize={len(payload)} sent.")
+
 
 def handle_register(conn, payload: bytes):
     if len(payload) != 255 + 160:
@@ -46,7 +50,7 @@ def handle_register(conn, payload: bytes):
     send_response(conn, RES_REGISTRATION_OK, client_id)  # exactly 16B
 
 def handle_get_clients_list(conn, requester_hex):
-    print(f"[CLIENTS LIST] STATE has {len(STATE['clients'])} clients")
+    log(f"[CLIENTS LIST] STATE has {len(STATE['clients'])} clients")
     visible = [
         (cid_hex, info)
         for cid_hex, info in STATE["clients"].items()
@@ -67,13 +71,13 @@ def handle_get_clients_list(conn, requester_hex):
 # ===== 602 – Public Key =====
 def handle_get_public_key(conn, payload: bytes):
     if len(payload) != 16:
-        print("[PUBLIC KEY] Invalid UUID length.")
+        log("[PUBLIC KEY] Invalid UUID length.")
         send_response(conn, RES_ERROR)
         return
 
     cid_hex = payload.hex()
     if cid_hex not in STATE["clients"]:
-        print(f"[PUBLIC KEY] No such client: {cid_hex}")
+        log(f"[PUBLIC KEY] No such client: {cid_hex}")
         send_response(conn, RES_ERROR)
         return
 
@@ -84,22 +88,22 @@ def handle_get_public_key(conn, payload: bytes):
     payload_out = cid_bytes + pubkey
 
     send_response(conn, RES_PUBLIC_KEY, payload_out)
-    print(f"[PUBLIC KEY] Sent key for {STATE['clients'][cid_hex]['name']}")
+    log(f"[PUBLIC KEY] Sent key for {STATE['clients'][cid_hex]['name']}")
 
 
 # ===== 603 – Send Message =====
 def handle_send_message(conn, payload: bytes, header):
     try:
         if len(payload) < 21:
-            print("[SEND MESSAGE] Payload too short.")
+            log("[SEND MESSAGE] Payload too short.")
             send_response(conn, RES_ERROR, b"")
             return
 
         to_uuid = payload[0:16].hex()
-        msg_type = payload[16]
+        msg_type = payload[16] # msg_type: 1=RequestSym, 2=SendSym, 3=Text
         content_size = int.from_bytes(payload[17:21], "little")
         if len(payload) != 21 + content_size:
-            print(f"[SEND MESSAGE] Invalid payload size. Declared={content_size}, actual={len(payload)-21}")
+            log(f"[SEND MESSAGE] Invalid payload size. Declared={content_size}, actual={len(payload)-21}")
             send_response(conn, RES_ERROR, b"")
             return
 
@@ -107,7 +111,7 @@ def handle_send_message(conn, payload: bytes, header):
         from_uuid = header["client_id"]
 
         if to_uuid not in STATE["clients"]:
-            print(f"[SEND MESSAGE] Destination {to_uuid} not found.")
+            log(f"[SEND MESSAGE] Destination {to_uuid} not found.")
             send_response(conn, RES_ERROR, b"")
             return
 
@@ -122,7 +126,7 @@ def handle_send_message(conn, payload: bytes, header):
         STATE["pending"][to_uuid].append((from_uuid, message_id, msg_type, content_size, content))
 
 
-        print(f"[SEND MESSAGE] Stored msg#{message_id} from {from_uuid[:8]} → {to_uuid[:8]} "
+        log(f"[SEND MESSAGE] Stored msg#{message_id} from {from_uuid[:8]} → {to_uuid[:8]} "
               f"(type={msg_type}, size={content_size})")
 
         # 2103 payload = toClientID(16) | messageID(4, LE)
@@ -130,7 +134,7 @@ def handle_send_message(conn, payload: bytes, header):
         send_response(conn, RES_MESSAGE_RECEIVED, response_payload)
 
     except Exception as e:
-        print(f"[SEND MESSAGE] Exception: {e}")
+        log(f"[SEND MESSAGE] Exception: {e}")
         send_response(conn, RES_ERROR, b"")
 
 
@@ -142,13 +146,13 @@ def handle_get_waiting_messages(conn, payload: bytes, header):
 
         # Verify this client exists
         if client_uuid not in STATE["clients"]:
-            print(f"[GET WAITING] Unknown client {client_uuid}")
+            log(f"[GET WAITING] Unknown client {client_uuid}")
             send_response(conn, RES_ERROR, b"")
             return
 
         # No messages waiting
         if client_uuid not in STATE["pending"] or not STATE["pending"][client_uuid]:
-            print(f"[GET WAITING] No pending messages for {client_uuid[:8]}")
+            log(f"[GET WAITING] No pending messages for {client_uuid[:8]}")
             send_response(conn, RES_WAITING_MESSAGES, b"")  # empty payload allowed
             return
 
@@ -162,7 +166,7 @@ def handle_get_waiting_messages(conn, payload: bytes, header):
             payload_bytes += msg_size.to_bytes(4, "little")
             payload_bytes += content
 
-            print(f"[GET WAITING] → msg#{msg_id} from {from_uuid[:8]} "
+            log(f"[GET WAITING] → msg#{msg_id} from {from_uuid[:8]} "
                   f"(type={msg_type}, size={msg_size})")
 
         # Clear the list after sending
@@ -170,9 +174,9 @@ def handle_get_waiting_messages(conn, payload: bytes, header):
 
         # Send combined payload
         send_response(conn, RES_WAITING_MESSAGES, bytes(payload_bytes))
-        print(f"[GET WAITING] Sent {len(messages)} messages to {client_uuid[:8]}")
+        log(f"[GET WAITING] Sent {len(messages)} messages to {client_uuid[:8]}")
 
     except Exception as e:
-        print(f"[GET WAITING] Exception: {e}")
+        log(f"[GET WAITING] Exception: {e}")
         send_response(conn, RES_ERROR, b"")
 

@@ -25,8 +25,9 @@ int main() {
             return 1;
         }
 
-        std::string dataDir = "data/user";
+        std::string dataDir = "data";
         std::filesystem::create_directories(dataDir);
+
 
         Connection conn;
         if (!conn.connectToServer(ip, port)) {

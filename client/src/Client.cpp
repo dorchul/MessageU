@@ -11,24 +11,28 @@
 #include <vector>
 #include <filesystem>
 
-
-static const bool VERBOSE = true;
+static const bool VERBOSE = false;
+#define LOG(x) if (VERBOSE) { std::cout << x << std::endl; }
 
 // ===============================
 // Register (600 → 2100)
 // ===============================
-bool Client::doRegister(const std::string& name, const std::string& dataDir)
+bool Client::doRegister(const std::string & name, const std::string & dataDir)
 {
-    std::filesystem::create_directories(dataDir);
-    std::string mePath = dataDir + "/me.info";
+    // Create a dedicated folder for this user
+    std::string userDir = dataDir + "/" + name;
+    std::filesystem::create_directories(userDir);
+    LOG("[" + name + "] Using user data directory: " + userDir);
 
-    // If already registered, just load and skip
+    std::string mePath = userDir + "/me.info";
+
+    // If already registered, skip
     if (std::filesystem::exists(mePath)) {
-        if (VERBOSE) std::cout << "[" << name << "] Already registered, using " << mePath << "\n";
+        LOG("[" + name + "] Already registered, using " + mePath);
         return true;
     }
 
-    if (VERBOSE) std::cout << "[" << name << "] Generating RSA key pair...\n";
+    LOG("[" + name + "] Generating RSA key pair...");
     RSAPrivateWrapper rsa;
 
     std::string privStr = rsa.getPrivateKey();
@@ -38,17 +42,16 @@ bool Client::doRegister(const std::string& name, const std::string& dataDir)
     std::vector<uint8_t> pubKeyDER(pubStr.begin(), pubStr.end());
 
     if (pubKeyDER.size() != 160) {
-        if (VERBOSE) std::cerr << "Warning: public key size = " << pubKeyDER.size()
-            << " (expected 160)\n";
+        std::cerr << "Warning: public key size = " << pubKeyDER.size() << " (expected 160)\n";
         pubKeyDER.resize(160, 0);
     }
 
     if (name.size() > 255) {
-        if (VERBOSE) std::cerr << "Error: name too long\n";
+        std::cerr << "Error: name too long\n";
         return false;
     }
 
-    // Build payload: [Name (255 bytes, null-terminated)] + [PublicKey (160 bytes)]
+    // Payload: Name (255B) + PublicKey (160B)
     std::vector<uint8_t> payload(255 + 160, 0);
     std::memcpy(payload.data(), name.c_str(), std::min<size_t>(name.size() + 1, 255));
     std::memcpy(payload.data() + 255, pubKeyDER.data(), 160);
@@ -60,86 +63,84 @@ bool Client::doRegister(const std::string& name, const std::string& dataDir)
     hdr.code = static_cast<uint16_t>(RequestCode::REGISTER);
     hdr.payloadSize = static_cast<uint32_t>(payload.size());
 
-    // Send
-    if (!m_conn.sendAll(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr))) return false;
-    if (VERBOSE) std::cout << "[" << name << "] sending register request...\n";
-    if (!m_conn.sendAll(payload.data(), payload.size())) return false;
-    if (VERBOSE)std::cout << "[" << name << "] waiting for server response...\n";
+    // Send request
+    if (!Utils::sendRequestHeader(m_conn, hdr)) return false;
+    LOG("[" + name + "] Sending register request...");
+    if (!Utils::sendPayload(m_conn, payload)) return false;
+    LOG("[" + name + "] Waiting for server response...");
 
     // Receive response header
     ResponseHeader rh{};
-    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&rh), sizeof(rh))) return false;
+    if (!Utils::recvResponseHeader(m_conn, rh)) return false;
 
     if (rh.version != VERSION ||
         rh.code != static_cast<uint16_t>(ResponseCode::REGISTRATION_OK) ||
         rh.payloadSize != 16)
     {
-        if (VERBOSE) std::cerr << "Invalid registration response (code=" << rh.code
+        std::cerr << "Invalid registration response (code=" << rh.code
             << ", size=" << rh.payloadSize << ")\n";
         return false;
     }
 
     // Receive UUID
     std::array<uint8_t, 16> id{};
-    if (!m_conn.recvAll(id.data(), id.size())) return false;
+    std::vector<uint8_t> payloadOut;
+    if (!Utils::recvPayload(m_conn, payloadOut, 16)) return false;
+    std::memcpy(id.data(), payloadOut.data(), 16);
     m_clientId = id;
 
     // Save identity
-    if (!Utils::saveMeInfo(name, m_clientId, privKeyDER, dataDir)) {
-        if (VERBOSE) std::cerr << "Failed to save me.info\n";
+    if (!Utils::saveMeInfo(name, m_clientId, privKeyDER, userDir)) {
+        std::cerr << "Failed to save me.info\n";
         return false;
     }
 
-    if (VERBOSE) std::cout << "[" << name << "] Registration complete. UUID saved.\n";
+    LOG("[" + name + "] Registration complete. UUID saved to " + mePath);
+    m_name = name;
     return true;
 }
 
 
 // ===============================
-// Request Clients list (601 → 2101)
+// Clients list (601 → 2101)
 // ===============================
 std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClientsList()
 {
     using namespace Protocol;
     std::vector<std::pair<std::array<uint8_t, 16>, std::string>> clients;
 
-    // ===== Build and send request =====
     RequestHeader header{};
     memcpy(header.clientID, m_clientId.data(), 16);
     header.version = VERSION;
     header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_CLIENTS_LIST));
     header.payloadSize = toLittleEndian32(0);
 
-    if (!m_conn.sendAll(reinterpret_cast<const uint8_t*>(&header), sizeof(header))) {
-        if (VERBOSE) std::cerr << "Failed to send request.\n";
+    if (!Utils::sendRequestHeader(m_conn, header)) {
+        std::cerr << "Failed to send request.\n";
         return clients;
     }
 
-    // ===== Receive response header =====
     ResponseHeader resp{};
-    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp)))
-        return clients;
+    if (!Utils::recvResponseHeader(m_conn, resp)) return clients;
 
     uint16_t code = fromLittleEndian16(resp.code);
     uint32_t size = fromLittleEndian32(resp.payloadSize);
 
     if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
-        if (VERBOSE) std::cout << "Server responded with an error.\n";
+        LOG("Server responded with an error.");
         return clients;
     }
     if (code != static_cast<uint16_t>(ResponseCode::CLIENTS_LIST)) {
-        if (VERBOSE) std::cerr << "Unexpected response code: " << code << "\n";
+        std::cerr << "Unexpected response code: " << code << "\n";
         return clients;
     }
 
-    // ===== Receive full payload =====
-    std::vector<uint8_t> payload(size);
-    if (!m_conn.recvAll(payload.data(), size))
-        return clients;
+    std::vector<uint8_t> payload;
+    if (!Utils::recvPayload(m_conn, payload, size)) return clients;
 
     const size_t entrySize = 16 + 255;
     if (size % entrySize != 0) {
-        if (VERBOSE) std::cerr << "Invalid clients list size.\n";
+        std::cerr << "Invalid clients list size.\n";
         return clients;
     }
 
@@ -159,131 +160,88 @@ std::vector<std::pair<std::array<uint8_t, 16>, std::string>> Client::requestClie
         clients.emplace_back(uuid, name);
     }
 
-
     return clients;
 }
 
-
 // ===============================
-// Request Public Key (602 → 2102)
+// Public Key (602 → 2102)
 // ===============================
 std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
 {
     using namespace Protocol;
+    std::array<uint8_t, 16> targetUUID = Utils::hexToUUID(targetUUIDHex);
 
-    // Convert hex UUID → 16-byte array
-    if (targetUUIDHex.size() != 32) {
-        if (VERBOSE) std::cerr << "Invalid UUID hex length.\n";
-        return {};
-    }
-
-    std::array<uint8_t, 16> targetUUID{};
-    for (size_t i = 0; i < 16; ++i) {
-        std::string byteStr = targetUUIDHex.substr(i * 2, 2);
-        targetUUID[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
-    }
-
-    // Build header
     RequestHeader header{};
     memcpy(header.clientID, m_clientId.data(), 16);
     header.version = VERSION;
     header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_PUBLIC_KEY));
     header.payloadSize = toLittleEndian32(16);
 
-    // Send header + payload (16-byte target UUID)
-    if (!m_conn.sendAll(reinterpret_cast<const uint8_t*>(&header), sizeof(header))) {
-        if (VERBOSE) std::cerr << "Failed to send header.\n";
-        return {};
-    }
-    if (!m_conn.sendAll(targetUUID.data(), 16)) {
-        if (VERBOSE) std::cerr << "Failed to send payload.\n";
-        return {};
-    }
+    if (!Utils::sendRequestHeader(m_conn, header)) return {};
+    if (!m_conn.sendAll(targetUUID.data(), 16)) return {};
 
-    // Receive response
     ResponseHeader resp{};
-    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp)))
-        return {};
+    if (!Utils::recvResponseHeader(m_conn, resp)) return {};
 
     uint16_t code = fromLittleEndian16(resp.code);
     uint32_t size = fromLittleEndian32(resp.payloadSize);
 
     if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
-        if (VERBOSE) std::cout << "Server responded with an error.\n";
+        LOG("Server responded with an error.");
         return {};
     }
     if (code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) || size != 176) {
-        if (VERBOSE) std::cerr << "Unexpected response (" << code << ", size=" << size << ").\n";
+        std::cerr << "Unexpected response (" << code << ", size=" << size << ").\n";
         return {};
     }
 
-    // Receive 176 bytes (UUID + key)
-    std::vector<uint8_t> buffer(size);
-    if (!m_conn.recvAll(buffer.data(), size))
-        return {};
+    std::vector<uint8_t> buffer;
+    if (!Utils::recvPayload(m_conn, buffer, size)) return {};
 
-    // Extract public key (last 160 bytes)
     std::vector<uint8_t> pubKey(buffer.begin() + 16, buffer.end());
     return pubKey;
 }
 
-
-// ==========================
+// ===============================
 // Send Message (603 → 2103)
-// Handles type 1–2–3 (RAM-only symmetric keys)
-// ==========================
+// ===============================
 bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     MessageType type,
     const std::vector<uint8_t>& content)
 {
     using namespace Protocol;
-
-    auto uuidToHex = [](const std::array<uint8_t, 16>& id) {
-        std::ostringstream oss;
-        for (auto b : id)
-            oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-        return oss.str();
-    };
-    const std::string targetHex = uuidToHex(toClient);
+    const std::string targetHex = Utils::uuidToHex(toClient);
     std::vector<uint8_t> finalContent;
 
     if (type == MessageType::REQUEST_SYM) {
-        if (VERBOSE) std::cout << "[603/Type 1] Requesting symmetric key...\n";
-        // Content empty
+        LOG("[603/Type 1] Requesting symmetric key...");
     }
     else if (type == MessageType::SEND_SYM) {
-        if (VERBOSE) std::cout << "[603/Type 2] Generating AES-128 key and encrypting with recipient RSA...\n";
+        LOG("[603/Type 2] Generating AES-128 key and encrypting with recipient RSA...");
 
-        // 1) Generate AES key (16 bytes)
         unsigned char rawKey[AESWrapper::DEFAULT_KEYLENGTH]{};
         AESWrapper::GenerateKey(rawKey, AESWrapper::DEFAULT_KEYLENGTH);
 
-        // 2) Fetch recipient public key via 602
         std::vector<uint8_t> pubKey = requestPublicKey(targetHex);
         if (pubKey.size() != RSAPublicWrapper::KEYSIZE) {
             std::cerr << "Invalid recipient public key size (" << pubKey.size() << ").\n";
             return false;
         }
 
-        // 3) RSA-encrypt AES key
-        RSAPublicWrapper rsa(reinterpret_cast<const char*>(pubKey.data()),
-            static_cast<unsigned int>(pubKey.size()));
-        std::string enc = rsa.encrypt(reinterpret_cast<const char*>(rawKey),
-            AESWrapper::DEFAULT_KEYLENGTH);
+        RSAPublicWrapper rsa(reinterpret_cast<const char*>(pubKey.data()), (unsigned int)pubKey.size());
+        std::string enc = rsa.encrypt(reinterpret_cast<const char*>(rawKey), AESWrapper::DEFAULT_KEYLENGTH);
         finalContent.assign(enc.begin(), enc.end());
 
-        // 4) Store symmetric key in RAM
         std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
         std::memcpy(key.data(), rawKey, AESWrapper::DEFAULT_KEYLENGTH);
         m_symmKeys[targetHex] = key;
-        if (VERBOSE) std::cout << "[603/Type 2] AES key cached in memory.\n";
+        LOG("[603/Type 2] AES key cached in memory.");
     }
     else if (type == MessageType::TEXT) {
-        if (VERBOSE) std::cout << "[603/Type 3] Encrypting plaintext with stored symmetric key...\n";
-
+        LOG("[603/Type 3] Encrypting plaintext with stored symmetric key...");
         auto it = m_symmKeys.find(targetHex);
         if (it == m_symmKeys.end()) {
-            std::cerr << "No symmetric key in memory for this peer. Send Type 2 first.\n";
+            std::cerr << "No symmetric key in memory for this peer.\n";
             return false;
         }
 
@@ -297,33 +255,25 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
         return false;
     }
 
-    // Build and send the 603 request
     const std::vector<uint8_t> packet =
-        Protocol::buildSendMessageRequest(m_clientId.data(),
-            toClient.data(),
-            type,
-            finalContent);
+        Protocol::buildSendMessageRequest(m_clientId.data(), toClient.data(), type, finalContent);
 
     if (!m_conn.sendAll(packet.data(), packet.size())) {
         std::cerr << "Failed to send message request.\n";
         return false;
     }
 
-    // Read response header
     ResponseHeader resp{};
-    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp))) {
-        std::cerr << "Failed to receive response header.\n";
-        return false;
-    }
+    if (!Utils::recvResponseHeader(m_conn, resp)) return false;
 
     const uint16_t code = fromLittleEndian16(resp.code);
     const uint32_t payloadSize = fromLittleEndian32(resp.payloadSize);
 
     if (code == static_cast<uint16_t>(ResponseCode::_ERROR_)) {
-        std::cout << "Server responded with an error.\n";
+        LOG("Server responded with an error.");
         if (payloadSize > 0) {
-            std::vector<uint8_t> drain(payloadSize);
-            m_conn.recvAll(drain.data(), payloadSize);
+            std::vector<uint8_t> drain;
+            Utils::recvPayload(m_conn, drain, payloadSize);
         }
         return false;
     }
@@ -331,43 +281,38 @@ bool Client::sendMessage(const std::array<uint8_t, 16>& toClient,
     if (code != static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED)) {
         std::cerr << "Unexpected response code: " << code << "\n";
         if (payloadSize > 0) {
-            std::vector<uint8_t> drain(payloadSize);
-            m_conn.recvAll(drain.data(), payloadSize);
+            std::vector<uint8_t> drain;
+            Utils::recvPayload(m_conn, drain, payloadSize);
         }
         return false;
     }
 
     if (payloadSize > 0) {
-        std::vector<uint8_t> drain(payloadSize);
-        m_conn.recvAll(drain.data(), payloadSize);
+        std::vector<uint8_t> drain;
+        Utils::recvPayload(m_conn, drain, payloadSize);
     }
 
     return true;
 }
 
-
 // ===============================
-// Get Waiting Messages (604 → 2104)
+// Waiting Messages (604 → 2104)
 // ===============================
 std::vector<PendingMessage> Client::requestWaitingMessages()
 {
     using namespace Protocol;
     std::vector<PendingMessage> messages;
 
-    // ===== Build and send request =====
     RequestHeader header{};
     memcpy(header.clientID, m_clientId.data(), 16);
     header.version = VERSION;
     header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_WAITING_MESSAGES));
     header.payloadSize = toLittleEndian32(0);
 
-    if (!m_conn.sendAll(reinterpret_cast<uint8_t*>(&header), sizeof(header)))
-        return messages;
+    if (!Utils::sendRequestHeader(m_conn, header)) return messages;
 
-    // ===== Receive response header =====
     ResponseHeader resp{};
-    if (!m_conn.recvAll(reinterpret_cast<uint8_t*>(&resp), sizeof(resp)))
-        return messages;
+    if (!Utils::recvResponseHeader(m_conn, resp)) return messages;
 
     uint16_t code = fromLittleEndian16(resp.code);
     uint32_t payloadSize = fromLittleEndian32(resp.payloadSize);
@@ -375,12 +320,9 @@ std::vector<PendingMessage> Client::requestWaitingMessages()
     if (code != static_cast<uint16_t>(ResponseCode::WAITING_MESSAGES) || payloadSize == 0)
         return messages;
 
-    // ===== Read payload =====
-    std::vector<uint8_t> buffer(payloadSize);
-    if (!m_conn.recvAll(buffer.data(), payloadSize))
-        return messages;
+    std::vector<uint8_t> buffer;
+    if (!Utils::recvPayload(m_conn, buffer, payloadSize)) return messages;
 
-    // ===== Parse sequential messages =====
     size_t offset = 0;
     while (offset + 25 <= buffer.size()) {
         PendingMessage msg{};
@@ -404,9 +346,8 @@ std::vector<PendingMessage> Client::requestWaitingMessages()
     return messages;
 }
 
-
 // ===============================
-// Decode and process waiting messages
+// Decode messages
 // ===============================
 std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMessage>& msgs)
 {
@@ -420,11 +361,10 @@ std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMess
 
         try {
             if (msg.type == (uint8_t)MessageType::SEND_SYM) {
-                // Decrypt the AES key using private RSA
                 std::string name;
                 std::array<uint8_t, 16> uuid{};
                 std::vector<uint8_t> priv;
-                if (!Utils::loadMeInfo(name, uuid, priv, "data/user")) {
+                if (!Utils::loadMeInfo(name, uuid, priv, "data/" + m_name)) {
                     out.text = "(Cannot load private key)";
                     results.push_back(out);
                     continue;
@@ -439,14 +379,12 @@ std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMess
                     continue;
                 }
 
-                // Cache AES key in memory
                 std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
                 std::memcpy(key.data(), plain.data(), AESWrapper::DEFAULT_KEYLENGTH);
                 m_symmKeys[out.fromHex] = key;
                 out.text = "[AES key cached in memory]";
             }
             else if (msg.type == (uint8_t)MessageType::TEXT) {
-                // Decrypt text using cached AES key
                 auto it = m_symmKeys.find(out.fromHex);
                 if (it == m_symmKeys.end()) {
                     out.text = "(No AES key in memory for sender)";

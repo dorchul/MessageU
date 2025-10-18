@@ -3,6 +3,12 @@
 #include <vector>
 #include <array>
 #include <cstdint>
+#include <iostream>
+
+// Forward decls in the GLOBAL namespace
+struct RequestHeader;
+struct ResponseHeader;
+class Connection;
 
 namespace Utils {
 
@@ -27,5 +33,18 @@ namespace Utils {
     // Hex string (32 chars) → UUID array (16 bytes)
     std::array<uint8_t, 16> hexToUUID(const std::string& hex);
 
+    // =====================
+    // Network I/O helpers
+    // =====================
+    bool sendRequestHeader(::Connection& conn, const ::RequestHeader& hdr);
+    bool recvResponseHeader(::Connection& conn, ::ResponseHeader& hdr);
+    bool sendPayload(::Connection& conn, const std::vector<uint8_t>& data);
+    bool recvPayload(::Connection& conn, std::vector<uint8_t>& out, uint32_t size);
 
+    // =====================
+    // Verbose logging
+    // =====================
+    inline void logVerbose(const std::string& msg, bool verbose = true) {
+        if (verbose) std::cout << msg << std::endl;
+    }
 }

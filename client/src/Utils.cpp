@@ -1,4 +1,7 @@
 ﻿#include "Utils.h"
+#include "Connection.h"
+#include "Protocol.h"
+
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -9,8 +12,6 @@
 #include <filesystem>
 #include <iostream>
 
-
-// ===== Base64 (encode only, single-line) =====
 static const char* B64CHARS =
 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -91,7 +92,7 @@ namespace Utils {
         return true;
     }
 
-    bool Utils::loadMeInfo(std::string& name,
+    bool loadMeInfo(std::string& name,
         std::array<uint8_t, 16>& uuid,
         std::vector<uint8_t>& privateKey,
         const std::string& dataDir)
@@ -135,7 +136,7 @@ namespace Utils {
     }
 
     // =====================
-    // UUID -> hex string
+    // UUID <-> hex conversion
     // =====================
     std::string uuidToHex(const std::array<uint8_t, 16>& uuid) {
         std::ostringstream oss;
@@ -145,16 +146,12 @@ namespace Utils {
         return oss.str();
     }
 
-    // =====================
-    // Hex string -> UUID (reverse)
-    // =====================
     std::array<uint8_t, 16> hexToUUID(const std::string& hex) {
         std::array<uint8_t, 16> uuid{};
         if (hex.size() != 32) {
             std::cerr << "[Utils] Invalid UUID hex length: " << hex.size() << " (expected 32)\n";
             return uuid; // all zeros
         }
-
         for (size_t i = 0; i < 16; ++i) {
             std::string byteStr = hex.substr(i * 2, 2);
             uuid[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
@@ -162,6 +159,26 @@ namespace Utils {
         return uuid;
     }
 
+    // =====================
+    // Network I/O helpers
+    // =====================
+    bool sendRequestHeader(Connection& conn, const RequestHeader& hdr) {
+        return conn.sendAll(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr));
+    }
 
+    bool recvResponseHeader(Connection& conn, ResponseHeader& hdr) {
+        return conn.recvAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+    }
+
+    bool sendPayload(Connection& conn, const std::vector<uint8_t>& data) {
+        if (data.empty()) return true;
+        return conn.sendAll(data.data(), data.size());
+    }
+
+    bool recvPayload(Connection& conn, std::vector<uint8_t>& out, uint32_t size) {
+        if (size == 0) return true;
+        out.resize(size);
+        return conn.recvAll(out.data(), size);
+    }
 
 } // namespace Utils
