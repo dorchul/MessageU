@@ -33,7 +33,7 @@ uint32_t Protocol::fromLittleEndian32(uint32_t value) {
 // ===== Serialization Test =====
 void testHeaderSerialization() {
     RequestHeader req{};
-    std::memset(req.clientID, 0xAB, 16);
+    std::memset(req.clientID, 0xAB, UUID_SIZE);
     req.version = VERSION;
     req.code = Protocol::toLittleEndian16(static_cast<uint16_t>(RequestCode::REGISTER));
     req.payloadSize = Protocol::toLittleEndian32(128);
@@ -54,9 +54,9 @@ void testHeaderSerialization() {
 }
 
 // ===== Build "Request Clients List" Packet =====
-std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[16]) {
+std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[UUID_SIZE]) {
     RequestHeader header{};
-    std::memcpy(header.clientID, clientID, 16);
+    std::memcpy(header.clientID, clientID, UUID_SIZE);
     header.version = VERSION;
     header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_CLIENTS_LIST));
     header.payloadSize = toLittleEndian32(0); // No payload
@@ -74,14 +74,14 @@ std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[16]
 // [Payload]
 //   toClientID(16) | type(1) | contentSize(4) | content(variable)
 std::vector<uint8_t> Protocol::buildSendMessageRequest(
-    const uint8_t clientID[16],
-    const uint8_t toClientID[16],
+    const uint8_t clientID[UUID_SIZE],
+    const uint8_t toClientID[UUID_SIZE],
     MessageType type,
     const std::vector<uint8_t>& content)
 {
     // ---- Prepare payload ----
     MessagePayload payload{};
-    std::memcpy(payload.toClientID, toClientID, 16);
+    std::memcpy(payload.toClientID, toClientID, UUID_SIZE);
     payload.type = static_cast<uint8_t>(type);
     payload.contentSize = toLittleEndian32(static_cast<uint32_t>(content.size()));
 
@@ -89,7 +89,7 @@ std::vector<uint8_t> Protocol::buildSendMessageRequest(
 
     // ---- Build header ----
     RequestHeader header{};
-    std::memcpy(header.clientID, clientID, 16);
+    std::memcpy(header.clientID, clientID, UUID_SIZE);
     header.version = VERSION;
     header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::SEND_MESSAGE));
     header.payloadSize = toLittleEndian32(payloadSize);
@@ -110,9 +110,3 @@ std::vector<uint8_t> Protocol::buildSendMessageRequest(
     return packet;
 }
 
-#ifdef PROTOCOL_TEST
-int main() {
-    testHeaderSerialization();
-    return 0;
-}
-#endif

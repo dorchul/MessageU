@@ -33,8 +33,6 @@ void displayMessages(const std::vector<DecodedMessage>& decoded)
 // ===================================================
 void runMenu(Client& client, const std::string& dataDir)
 {
-    std::unordered_map<std::string, std::vector<uint8_t>> knownClients; // RAM cache for public keys
-
     std::cout << "\nMessageU client at your service.\n";
     while (true) {
         std::cout <<
@@ -90,7 +88,6 @@ void runMenu(Client& client, const std::string& dataDir)
             if (key.empty())
                 std::cout << "[!] Failed to retrieve key.\n";
             else {
-                knownClients[target] = key;
                 std::cout << "[+] Public key retrieved and cached (" << key.size() << " bytes)\n";
             }
             break;

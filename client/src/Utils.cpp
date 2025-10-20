@@ -162,12 +162,18 @@ namespace Utils {
     // =====================
     // Network I/O helpers
     // =====================
-    bool sendRequestHeader(Connection& conn, const RequestHeader& hdr) {
-        return conn.sendAll(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr));
+    bool sendRequestHeader(Connection& conn, RequestHeader& hdr) {
+        hdr.code = Protocol::toLittleEndian16(hdr.code);
+        hdr.payloadSize = Protocol::toLittleEndian32(hdr.payloadSize);
+        return conn.sendAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
     }
 
     bool recvResponseHeader(Connection& conn, ResponseHeader& hdr) {
-        return conn.recvAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+        if (!conn.recvAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)))
+            return false;
+        hdr.code = Protocol::fromLittleEndian16(hdr.code);
+        hdr.payloadSize = Protocol::fromLittleEndian32(hdr.payloadSize);
+        return true;
     }
 
     bool sendPayload(Connection& conn, const std::vector<uint8_t>& data) {

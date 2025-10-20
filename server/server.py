@@ -62,36 +62,35 @@ def recv_exact(conn, size):
 def handle_client(conn, addr):
     log(f"[+] Connected: {addr}")
     try:
-        while True:
-            # Read request header
-            data = recv_exact(conn, REQ_HEADER_SIZE)
-            if not data:
-                break
+        # Read request header
+        data = recv_exact(conn, REQ_HEADER_SIZE)
+        if not data:
+            return
 
-            client_id_bytes, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
-            client_id_hex = client_id_bytes.hex()
-            payload = recv_exact(conn, payload_size) if payload_size > 0 else b""
+        client_id_bytes, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
+        client_id_hex = client_id_bytes.hex()
+        payload = recv_exact(conn, payload_size) if payload_size > 0 else b""
 
-            log(f"[REQ] Code={code}, From={client_id_hex[:8]}, Payload={payload_size}B")
+        log(f"[REQ] Code={code}, From={client_id_hex[:8]}, Payload={payload_size}B")
 
-            # Build header info dict (used by 603/604)
-            header = {
-                "client_id": client_id_hex,
-                "version": version,
-                "code": code,
-            }
+        # Build header info dict (used by 603/604)
+        header = {
+            "client_id": client_id_hex,
+            "version": version,
+            "code": code,
+        }
 
-            # Route to appropriate handler
-            handler = ROUTES.get(code)
-            if handler:
-                if code in (REQ_REGISTER, REQ_PUBLIC_KEY):
-                    handler(conn, payload)
-                elif code == REQ_CLIENTS_LIST:
-                    handler(conn, client_id_hex)
-                else:
-                    handler(conn, payload, header)
+        # Route to appropriate handler
+        handler = ROUTES.get(code)
+        if handler:
+            if code in (REQ_REGISTER, REQ_PUBLIC_KEY):
+                handler(conn, payload)
+            elif code == REQ_CLIENTS_LIST:
+                handler(conn, client_id_hex)
             else:
-                send_response(conn, RES_ERROR)
+                handler(conn, payload, header)
+        else:
+            send_response(conn, RES_ERROR)
 
     except Exception as e:
         log(f"[ERROR] {e}")

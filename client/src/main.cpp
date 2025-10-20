@@ -28,13 +28,7 @@ int main() {
         std::string dataDir = "data";
         std::filesystem::create_directories(dataDir);
 
-
-        Connection conn;
-        if (!conn.connectToServer(ip, port)) {
-            std::cerr << "Failed to connect to server.\n";
-            return 1;
-        }
-
+        Connection conn;  // will be reused by Client but connect per request
         Client client(conn, dataDir);
         runMenu(client, dataDir);
 

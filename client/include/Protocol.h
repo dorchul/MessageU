@@ -4,6 +4,13 @@
 
 // ===== Protocol Constants =====
 constexpr uint8_t VERSION = 1;
+constexpr size_t UUID_SIZE = 16;
+constexpr size_t NAME_SIZE = 255;
+constexpr size_t PUBKEY_SIZE = 160;
+constexpr size_t MSG_ID_SIZE = 4;
+constexpr size_t MSG_TYPE_SIZE = 1;
+constexpr size_t CONTENT_SIZE = 4;
+
 
 // ===== Request Codes =====
 enum class RequestCode : uint16_t {
@@ -35,7 +42,7 @@ enum class MessageType : uint8_t {
 // ===== Message Header Structures =====
 #pragma pack(push, 1)
 struct RequestHeader {
-    uint8_t clientID[16];
+    uint8_t clientID[UUID_SIZE];
     uint8_t version;
     uint16_t code;
     uint32_t payloadSize;
@@ -51,12 +58,18 @@ struct ResponseHeader {
 // ===== Message Payload (603) =====
 #pragma pack(push, 1)
 struct MessagePayload {
-    uint8_t toClientID[16];
+    uint8_t toClientID[UUID_SIZE];
     uint8_t type;         // see MessageType
     uint32_t contentSize; // length of content
     // Followed by variable-sized content
 };
 #pragma pack(pop)
+
+
+static_assert(sizeof(RequestHeader) == 23, "RequestHeader must be 23 bytes");
+static_assert(sizeof(ResponseHeader) == 7, "ResponseHeader must be 7 bytes");
+static_assert(sizeof(MessagePayload) == 21, "MessagePayload must be 21 bytes");
+
 
 // ===== Utility Functions =====
 namespace Protocol {
@@ -67,10 +80,10 @@ namespace Protocol {
     uint32_t fromLittleEndian32(uint32_t value);
 
     // === Packet builders ===
-    std::vector<uint8_t> buildClientListRequest(const uint8_t clientID[16]);
+    std::vector<uint8_t> buildClientListRequest(const uint8_t clientID[UUID_SIZE]);
     std::vector<uint8_t> buildSendMessageRequest(
-        const uint8_t clientID[16],
-        const uint8_t toClientID[16],
+        const uint8_t clientID[UUID_SIZE],
+        const uint8_t toClientID[UUID_SIZE],
         MessageType type,
         const std::vector<uint8_t>& content
     );

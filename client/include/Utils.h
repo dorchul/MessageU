@@ -36,7 +36,7 @@ namespace Utils {
     // =====================
     // Network I/O helpers
     // =====================
-    bool sendRequestHeader(::Connection& conn, const ::RequestHeader& hdr);
+    bool sendRequestHeader(::Connection& conn, ::RequestHeader& hdr);
     bool recvResponseHeader(::Connection& conn, ::ResponseHeader& hdr);
     bool sendPayload(::Connection& conn, const std::vector<uint8_t>& data);
     bool recvPayload(::Connection& conn, std::vector<uint8_t>& out, uint32_t size);

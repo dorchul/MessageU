@@ -95,4 +95,6 @@ private:
     std::string m_name;
     std::vector<uint8_t> m_pubKey;
     std::unordered_map<std::string, std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>> m_symmKeys;
+    std::unordered_map<std::string, std::vector<uint8_t>> m_cachedPubKeys;
+    bool ensureConnected();
 };

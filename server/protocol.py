@@ -2,9 +2,12 @@ import struct
 
 # ===== Protocol Constants =====
 VERSION = 1
-CLIENT_ID_SIZE = 16
-PUBKEY_SIZE = 160
-
+UUID_SIZE      = 16
+NAME_SIZE      = 255
+PUBKEY_SIZE    = 160
+MSG_ID_SIZE    = 4      # 32-bit message index
+MSG_TYPE_SIZE  = 1      # 1 byte
+CONTENT_SIZE = 4    # 32-bit content length field
 
 # Request Codes
 REQ_REGISTER = 600
@@ -34,6 +37,7 @@ RES_HEADER_FORMAT = "<BHI"      # Version(1B) | Code(2B) | PayloadSize(4B)
 
 REQ_HEADER_SIZE = struct.calcsize(REQ_HEADER_FORMAT)
 RES_HEADER_SIZE = struct.calcsize(RES_HEADER_FORMAT)
+
 
 # ===== Helpers =====
 def pack_request_header(client_id: bytes, code: int, payload_size: int) -> bytes:
