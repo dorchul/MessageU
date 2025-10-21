@@ -57,19 +57,6 @@ public:
     const std::array<uint8_t, 16>& id() const noexcept { return m_clientId; }
     const std::string& name() const noexcept { return m_name; }
 
-    // ===== Symmetric key operations (pass-through to KeyManager) =====
-    void cacheSymmetricKey(const std::string& peerHex,
-        const std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>& key) {
-        m_keys.cacheSymmetricKey(peerHex, key);
-    }
-    bool hasSymmetricKey(const std::string& peerHex) const {
-        return m_keys.hasSymmetricKey(peerHex);
-    }
-    std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>
-        getSymmetricKey(const std::string& peerHex) const {
-        return m_keys.getSymmetricKey(peerHex);
-    }
-
 private:
     bool ensureConnected() const;
     bool loadIdentity(const std::string& dataDir);

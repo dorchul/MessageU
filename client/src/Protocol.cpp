@@ -2,6 +2,8 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include <string>
+#include <array>
 
 // ===== Endian Conversion =====
 static bool isLittleEndian() {
@@ -109,4 +111,67 @@ std::vector<uint8_t> Protocol::buildSendMessageRequest(
 
     return packet;
 }
+
+// ===== Build "Register" Request (600) =====
+std::vector<uint8_t> Protocol::buildRegisterRequest(
+    const std::string& name,
+    const std::vector<uint8_t>& pubKeyDER)
+{
+    if (name.size() > NAME_SIZE)
+        throw std::runtime_error("Name too long for registration request");
+
+    // --- Build payload ---
+    std::vector<uint8_t> payload(NAME_SIZE + PUBKEY_SIZE, 0);
+    std::memcpy(payload.data(), name.c_str(),
+        std::min(name.size() + 1, (size_t)NAME_SIZE));
+    std::memcpy(payload.data() + NAME_SIZE, pubKeyDER.data(),
+        std::min(pubKeyDER.size(), (size_t)PUBKEY_SIZE));
+
+    // --- Header ---
+    RequestHeader hdr{};
+    std::memset(hdr.clientID, 0, UUID_SIZE); // unregistered
+    hdr.version = VERSION;
+    hdr.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::REGISTER));
+    hdr.payloadSize = toLittleEndian32(static_cast<uint32_t>(payload.size()));
+
+    // --- Serialize ---
+    std::vector<uint8_t> packet(sizeof(RequestHeader) + payload.size());
+    std::memcpy(packet.data(), &hdr, sizeof(RequestHeader));
+    std::memcpy(packet.data() + sizeof(RequestHeader), payload.data(), payload.size());
+    return packet;
+}
+
+// ===== Build "Get Public Key" Request (602) =====
+std::vector<uint8_t> Protocol::buildGetPublicKeyRequest(
+    const uint8_t clientID[UUID_SIZE],
+    const std::array<uint8_t, UUID_SIZE>& targetUUID)
+{
+    RequestHeader hdr{};
+    std::memcpy(hdr.clientID, clientID, UUID_SIZE);
+    hdr.version = VERSION;
+    hdr.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_PUBLIC_KEY));
+    hdr.payloadSize = toLittleEndian32(UUID_SIZE);
+
+    std::vector<uint8_t> packet(sizeof(RequestHeader) + UUID_SIZE);
+    std::memcpy(packet.data(), &hdr, sizeof(RequestHeader));
+    std::memcpy(packet.data() + sizeof(RequestHeader),
+        targetUUID.data(), UUID_SIZE);
+    return packet;
+}
+
+// ===== Build "Get Waiting Messages" Request (604) =====
+std::vector<uint8_t> Protocol::buildGetWaitingMessagesRequest(
+    const uint8_t clientID[UUID_SIZE])
+{
+    RequestHeader hdr{};
+    std::memcpy(hdr.clientID, clientID, UUID_SIZE);
+    hdr.version = VERSION;
+    hdr.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_WAITING_MESSAGES));
+    hdr.payloadSize = toLittleEndian32(0);
+
+    std::vector<uint8_t> packet(sizeof(RequestHeader));
+    std::memcpy(packet.data(), &hdr, sizeof(RequestHeader));
+    return packet;
+}
+
 

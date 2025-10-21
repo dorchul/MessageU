@@ -218,27 +218,14 @@ bool Client::doRegister(const std::string& dataDir)
     std::vector<uint8_t> pubKeyDER(pubStr.begin(), pubStr.end());
     pubKeyDER.resize(PUBKEY_SIZE, 0);
 
-    // ===== Validate and build payload =====
-    if (m_name.size() > NAME_SIZE) {
-        std::cerr << "Error: name too long\n";
-        return false;
-    }
+    // === Build full register request ===
+    auto packet = Protocol::buildRegisterRequest(m_name, pubKeyDER);
 
-    std::vector<uint8_t> payload(NAME_SIZE + PUBKEY_SIZE, 0);
-    std::memcpy(payload.data(), m_name.c_str(), std::min(m_name.size() + 1, (size_t)NAME_SIZE));
-    std::memcpy(payload.data() + NAME_SIZE, pubKeyDER.data(), PUBKEY_SIZE);
-
-    // ===== Send header & payload =====
-    RequestHeader hdr{};
-    std::memset(hdr.clientID, 0, UUID_SIZE);
-    hdr.version = VERSION;
-    hdr.code = static_cast<uint16_t>(RequestCode::REGISTER);
-    hdr.payloadSize = static_cast<uint32_t>(payload.size());
-
-    if (!Utils::sendRequestHeader(m_conn, hdr) || !Utils::sendPayload(m_conn, payload))
+    // === Send ===
+    if (!m_conn.sendAll(packet.data(), packet.size()))
         return false;
 
-    // ===== Receive response =====
+    // === Receive response ===
     ResponseHeader rh{};
     if (!Utils::recvResponseHeader(m_conn, rh) ||
         rh.code != static_cast<uint16_t>(ResponseCode::REGISTRATION_OK) ||
@@ -260,6 +247,7 @@ bool Client::doRegister(const std::string& dataDir)
     LOG("[" + m_name + "] Registration complete. UUID saved to " + mePath);
     return true;
 }
+
 
 // ===============================
 // Clients list (601 → 2101)
@@ -321,22 +309,16 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
 
     std::array<uint8_t, UUID_SIZE> targetUUID = Utils::hexToUUID(targetUUIDHex);
 
-    RequestHeader header{};
-    memcpy(header.clientID, m_clientId.data(), UUID_SIZE);
-    header.version = VERSION;
-    header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_PUBLIC_KEY));
-    header.payloadSize = toLittleEndian32(UUID_SIZE);
+    // === Build request ===
+    auto packet = Protocol::buildGetPublicKeyRequest(m_clientId.data(), targetUUID);
+    if (!m_conn.sendAll(packet.data(), packet.size())) return {};
 
-    if (!Utils::sendRequestHeader(m_conn, header) ||
-        !m_conn.sendAll(targetUUID.data(), UUID_SIZE))
-        return {};
-
+    // === Receive ===
     ResponseHeader resp{};
     if (!Utils::recvResponseHeader(m_conn, resp)) return {};
 
     const uint16_t code = fromLittleEndian16(resp.code);
     const uint32_t size = fromLittleEndian32(resp.payloadSize);
-
     if (code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) ||
         size != UUID_SIZE + PUBKEY_SIZE)
         return {};
@@ -349,6 +331,7 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
     LOG("[602] Cached public key for " + targetUUIDHex.substr(0, 8));
     return pubKey;
 }
+
 
 // ===============================
 // Send Message (603 → 2103)
@@ -407,7 +390,6 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
     return sendMessagePacket(m_conn, packet);
 }
 
-
 // ===============================
 // Waiting Messages (604 → 2104)
 // ===============================
@@ -417,14 +399,11 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
     std::vector<PendingMessage> messages;
     if (!ensureConnected()) return messages;
 
-    RequestHeader header{};
-    memcpy(header.clientID, m_clientId.data(), UUID_SIZE);
-    header.version = VERSION;
-    header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_WAITING_MESSAGES));
-    header.payloadSize = toLittleEndian32(0);
+    // === Build request ===
+    auto packet = Protocol::buildGetWaitingMessagesRequest(m_clientId.data());
+    if (!m_conn.sendAll(packet.data(), packet.size())) return messages;
 
-    if (!Utils::sendRequestHeader(m_conn, header)) return messages;
-
+    // === Receive ===
     ResponseHeader resp{};
     if (!Utils::recvResponseHeader(m_conn, resp)) return messages;
 
@@ -439,7 +418,7 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
     size_t offset = 0;
     while (offset + UUID_SIZE + MSG_ID_SIZE + MSG_TYPE_SIZE + CONTENT_SIZE <= buffer.size()) {
         PendingMessage msg{};
-        memcpy(msg.fromId.data(), &buffer[offset], UUID_SIZE);
+        std::memcpy(msg.fromId.data(), &buffer[offset], UUID_SIZE);
         offset += UUID_SIZE;
 
         msg.id = fromLittleEndian32(*reinterpret_cast<uint32_t*>(&buffer[offset]));
@@ -458,7 +437,6 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
     return messages;
 }
 
-
 std::vector<DecodedMessage> Client::fetchMessages() {
     auto msgs = requestWaitingMessages();  // 604
     if (msgs.empty()) {
@@ -468,5 +446,3 @@ std::vector<DecodedMessage> Client::fetchMessages() {
     LOG("[604] Decoding " + std::to_string(msgs.size()) + " messages...");
     return decodeMessages(msgs, m_identity, m_keys);  // file-local helper
 }
-
-

@@ -28,16 +28,4 @@ namespace Utils {
     bool recvResponseHeader(::Connection& conn, ::ResponseHeader& hdr);
     bool sendPayload(::Connection& conn, const std::vector<uint8_t>& data);
     bool recvPayload(::Connection& conn, std::vector<uint8_t>& out, uint32_t size);
-
-    //// Save me.info (3 lines): Name, UUID hex (32), PrivateKey Base64
-    //bool saveMeInfo(const std::string& name,
-    //    const std::array<uint8_t, 16>& id,
-    //    const std::vector<uint8_t>& privateKey,
-    //    const std::string& dataDir);
-
-    //// Load me.info (3 lines): Name, UUID hex (32), PrivateKey Base64
-    //bool loadMeInfo(std::string& name,
-    //    std::array<uint8_t, 16>& uuid,
-    //    std::vector<uint8_t>& privateKey,
-    //    const std::string& dataDir);
 }

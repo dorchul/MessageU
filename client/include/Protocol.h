@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <array>
 
 // ===== Protocol Constants =====
 constexpr uint8_t VERSION = 1;
@@ -10,7 +12,6 @@ constexpr size_t PUBKEY_SIZE = 160;
 constexpr size_t MSG_ID_SIZE = 4;
 constexpr size_t MSG_TYPE_SIZE = 1;
 constexpr size_t CONTENT_SIZE = 4;
-
 
 // ===== Request Codes =====
 enum class RequestCode : uint16_t {
@@ -34,9 +35,9 @@ enum class ResponseCode : uint16_t {
 // ===== Message Types =====
 enum class MessageType : uint8_t {
     REQUEST_SYM = 1,  // request symmetric key
-    SEND_SYM = 2,  // send symmetric key (RSA encrypted)
-    TEXT = 3,  // send text message (AES encrypted)
-    FILE = 4   // bonus: send file
+    SEND_SYM = 2,     // send symmetric key (RSA encrypted)
+    TEXT = 3,         // send text message (AES encrypted)
+    FILE = 4          // bonus: send file
 };
 
 // ===== Message Header Structures =====
@@ -67,6 +68,7 @@ struct MessagePayload {
 
 // ===== Utility Functions =====
 namespace Protocol {
+
     // Endian conversions
     uint16_t toLittleEndian16(uint16_t value);
     uint32_t toLittleEndian32(uint32_t value);
@@ -75,10 +77,25 @@ namespace Protocol {
 
     // === Packet builders ===
     std::vector<uint8_t> buildClientListRequest(const uint8_t clientID[UUID_SIZE]);
+
     std::vector<uint8_t> buildSendMessageRequest(
         const uint8_t clientID[UUID_SIZE],
         const uint8_t toClientID[UUID_SIZE],
         MessageType type,
         const std::vector<uint8_t>& content
+    );
+
+    std::vector<uint8_t> buildRegisterRequest(
+        const std::string& name,
+        const std::vector<uint8_t>& pubKeyDER
+    );
+
+    std::vector<uint8_t> buildGetPublicKeyRequest(
+        const uint8_t clientID[UUID_SIZE],
+        const std::array<uint8_t, UUID_SIZE>& targetUUID
+    );
+
+    std::vector<uint8_t> buildGetWaitingMessagesRequest(
+        const uint8_t clientID[UUID_SIZE]
     );
 }
