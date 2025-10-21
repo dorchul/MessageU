@@ -1,5 +1,7 @@
 #include "Menu.h"
 #include "Utils.h"
+#include "client.h"
+
 #include <iostream>
 #include <vector>
 #include <array>
@@ -59,11 +61,8 @@ void runMenu(Client& client, const std::string& dataDir)
 
         switch (choice) {
         case 110: {
-            std::string name;
-            std::cout << "Enter your name: ";
-            std::cin >> name;
-            if (client.doRegister(name, dataDir))
-                std::cout << "[+] Registered successfully as " << name << "\n";
+            if (client.doRegister(dataDir))
+                std::cout << "[+] Registered successfully as " << client.name() << "\n";
             else
                 std::cout << "[!] Registration failed.\n";
             break;

@@ -12,6 +12,8 @@
 #include "AESWrapper.h"
 #include "Base64Wrapper.h"
 #include "RSAWrapper.h"
+#include "IdentityManager.h"
+#include "KeyManager.h"
 
 class Connection;
 
@@ -39,24 +41,26 @@ struct DecodedMessage {
 // ===============================
 class Client {
 public:
-    explicit Client(Connection& conn, const std::string& dataDir)
-        : m_conn(conn)
+    explicit Client(Connection& conn, const std::string& name, const std::string& dataDir)
+        : m_conn(conn), m_name(name)
     {
-        std::string name;
-        std::vector<uint8_t> privKey;
-        if (Utils::loadMeInfo(name, m_clientId, privKey, dataDir)) {
-            m_name = name;
-            std::cout << "[Client] Loaded UUID from " << dataDir << "/me.info\n\n";
+        if (m_identity.load(dataDir, m_name, m_clientId)) {
+            std::cout << "[Client] Loaded identity: \"" << m_name
+                << "\" from " << dataDir << "/me.info\n";
         }
         else {
             std::memset(m_clientId.data(), 0, 16);
-            std::cout << "[Client] No existing identity found.\n\n";
+            std::cout << "[Client] No existing identity found in " << dataDir << "\n";
         }
+
+        std::cout << std::endl;
     }
 
 
+
+
     // ===== Protocol operations =====
-    bool doRegister(const std::string& name, const std::string& dataDir);  // 600
+    bool doRegister(const std::string& dataDir);  // 600
     
     std::vector<std::pair<std::array<uint8_t, 16>, std::string>> requestClientsList(); // 601
     
@@ -96,5 +100,7 @@ private:
     std::vector<uint8_t> m_pubKey;
     std::unordered_map<std::string, std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>> m_symmKeys;
     std::unordered_map<std::string, std::vector<uint8_t>> m_cachedPubKeys;
+    IdentityManager m_identity;
+    KeyManager m_keys;
     bool ensureConnected();
 };

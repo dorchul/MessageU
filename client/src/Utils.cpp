@@ -63,77 +63,77 @@ namespace Utils {
         return true;
     }
 
-    // =====================
-    // me.info
-    // =====================
-    bool saveMeInfo(const std::string& name,
-        const std::array<uint8_t, 16>& id,
-        const std::vector<uint8_t>& privateKey,
-        const std::string& dataDir)
-    {
-        std::filesystem::create_directories(dataDir);
-        std::ofstream f(dataDir + "/me.info", std::ios::binary | std::ios::trunc);
-        if (!f.is_open()) return false;
+    //// =====================
+    //// me.info
+    //// =====================
+    //bool saveMeInfo(const std::string& name,
+    //    const std::array<uint8_t, 16>& id,
+    //    const std::vector<uint8_t>& privateKey,
+    //    const std::string& dataDir)
+    //{
+    //    std::filesystem::create_directories(dataDir);
+    //    std::ofstream f(dataDir + "/me.info", std::ios::binary | std::ios::trunc);
+    //    if (!f.is_open()) return false;
 
-        // 1. Name
-        f << name << "\n";
+    //    // 1. Name
+    //    f << name << "\n";
 
-        // 2. UUID hex
-        std::ostringstream uuidHex;
-        for (auto b : id)
-            uuidHex << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(b);
-        f << uuidHex.str() << "\n";
+    //    // 2. UUID hex
+    //    std::ostringstream uuidHex;
+    //    for (auto b : id)
+    //        uuidHex << std::hex << std::setw(2) << std::setfill('0')
+    //        << static_cast<int>(b);
+    //    f << uuidHex.str() << "\n";
 
-        // 3. Private key base64 (DER)
-        std::string priv64 = base64Encode(privateKey.data(), privateKey.size());
-        f << priv64 << "\n";
+        //    // 3. Private key base64 (DER)
+        //    std::string priv64 = base64Encode(privateKey.data(), privateKey.size());
+        //    f << priv64 << "\n";
 
-        return true;
-    }
+    //    return true;
+    //}
 
-    bool loadMeInfo(std::string& name,
-        std::array<uint8_t, 16>& uuid,
-        std::vector<uint8_t>& privateKey,
-        const std::string& dataDir)
-    {
-        std::ifstream f(dataDir + "/me.info");
-        if (!f.is_open()) return false;
+    //bool loadMeInfo(std::string& name,
+    //    std::array<uint8_t, 16>& uuid,
+    //    std::vector<uint8_t>& privateKey,
+    //    const std::string& dataDir)
+    //{
+    //    std::ifstream f(dataDir + "/me.info");
+    //    if (!f.is_open()) return false;
 
-        std::string uuidHex, priv64;
-        if (!std::getline(f, name)) return false;
-        if (!std::getline(f, uuidHex)) return false;
-        if (!std::getline(f, priv64)) return false;
+    //    std::string uuidHex, priv64;
+    //    if (!std::getline(f, name)) return false;
+    //    if (!std::getline(f, uuidHex)) return false;
+    //    if (!std::getline(f, priv64)) return false;
 
-        // Parse UUID hex → bytes
-        if (uuidHex.size() != 32) return false;
-        for (size_t i = 0; i < 16; ++i) {
-            std::string byteStr = uuidHex.substr(i * 2, 2);
-            uuid[i] = static_cast<uint8_t>(std::stoi(byteStr, nullptr, 16));
-        }
+    //    // Parse UUID hex → bytes
+    //    if (uuidHex.size() != 32) return false;
+    //    for (size_t i = 0; i < 16; ++i) {
+    //        std::string byteStr = uuidHex.substr(i * 2, 2);
+    //        uuid[i] = static_cast<uint8_t>(std::stoi(byteStr, nullptr, 16));
+    //    }
 
-        // Decode base64 private key
-        auto decode64 = [](const std::string& in) -> std::vector<uint8_t> {
-            static const std::string chars =
-                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            std::vector<uint8_t> out;
-            int val = 0, valb = -8;
-            for (unsigned char c : in) {
-                if (isspace(c) || c == '=') continue;
-                int idx = chars.find(c);
-                if (idx == std::string::npos) break;
-                val = (val << 6) + idx;
-                valb += 6;
-                if (valb >= 0) {
-                    out.push_back(uint8_t((val >> valb) & 0xFF));
-                    valb -= 8;
-                }
-            }
-            return out;
-        };
-        privateKey = decode64(priv64);
-        return true;
-    }
+    //    // Decode base64 private key
+    //    auto decode64 = [](const std::string& in) -> std::vector<uint8_t> {
+    //        static const std::string chars =
+    //            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    //        std::vector<uint8_t> out;
+    //        int val = 0, valb = -8;
+    //        for (unsigned char c : in) {
+    //            if (isspace(c) || c == '=') continue;
+    //            int idx = chars.find(c);
+    //            if (idx == std::string::npos) break;
+    //            val = (val << 6) + idx;
+    //            valb += 6;
+    //            if (valb >= 0) {
+    //                out.push_back(uint8_t((val >> valb) & 0xFF));
+    //                valb -= 8;
+    //            }
+    //        }
+    //        return out;
+    //    };
+    //    privateKey = decode64(priv64);
+    //    return true;
+    //}
 
     // =====================
     // UUID <-> hex conversion

@@ -17,53 +17,51 @@ static const bool VERBOSE = true;
 // ===============================
 // Register (600 → 2100)
 // ===============================
-bool Client::doRegister(const std::string & name, const std::string & dataDir)
+bool Client::doRegister(const std::string & dataDir)
 {
     if (!ensureConnected()) return false;
 
-    std::string userDir = dataDir + "/" + name;
+    std::string userDir = dataDir; // already per-user
     std::string mePath = userDir + "/me.info";
 
-    // If already registered, skip
     if (std::filesystem::exists(mePath)) {
-        LOG("[" + name + "] Already registered, using " + mePath);
+        LOG("[" + m_name + "] Already registered, using " + mePath);
         return true;
     }
 
-    // Create folder only if not registered
     std::filesystem::create_directories(userDir);
-    LOG("[" + name + "] Using user data directory: " + userDir);
+    LOG("[" + m_name + "] Using user data directory: " + userDir);
 
-
-    LOG("[" + name + "] Generating RSA key pair...");
+    LOG("[" + m_name + "] Generating RSA key pair...");
     RSAPrivateWrapper rsa;
 
     std::string privStr = rsa.getPrivateKey();
     std::string pubStr = rsa.getPublicKey();
 
-    std::vector<uint8_t> privKeyDER(privStr.begin(), privStr.end());
+    // Build public key bytes
     std::vector<uint8_t> pubKeyDER(pubStr.begin(), pubStr.end());
-
     if (pubKeyDER.size() != PUBKEY_SIZE) {
-        std::cerr << "Warning: public key size = " << pubKeyDER.size() << " (expected 160)\n";
+        std::cerr << "Warning: public key size = " << pubKeyDER.size()
+            << " (expected 160)\n";
         pubKeyDER.resize(PUBKEY_SIZE, 0);
     }
 
-    if (name.size() > NAME_SIZE) {
+    // Validate name
+    if (m_name.size() > NAME_SIZE) {
         std::cerr << "Error: name too long\n";
         return false;
     }
-
-    // Ensure name contains only ASCII printable characters (0x20–0x7E)
-    for (unsigned char c : name) {
+    for (unsigned char c : m_name) {
         if (c < 0x20 || c > 0x7E) {
             std::cerr << "Error: name must contain only ASCII printable characters\n";
             return false;
         }
     }
+
     // Payload: Name (255B) + PublicKey (160B)
     std::vector<uint8_t> payload(NAME_SIZE + PUBKEY_SIZE, 0);
-    std::memcpy(payload.data(), name.c_str(), std::min<size_t>(name.size() + 1, NAME_SIZE));
+    std::memcpy(payload.data(), m_name.c_str(),
+        std::min<size_t>(m_name.size() + 1, NAME_SIZE));
     std::memcpy(payload.data() + NAME_SIZE, pubKeyDER.data(), PUBKEY_SIZE);
 
     // Header
@@ -75,9 +73,9 @@ bool Client::doRegister(const std::string & name, const std::string & dataDir)
 
     // Send request
     if (!Utils::sendRequestHeader(m_conn, hdr)) return false;
-    LOG("[" + name + "] Sending register request...");
+    LOG("[" + m_name + "] Sending register request...");
     if (!Utils::sendPayload(m_conn, payload)) return false;
-    LOG("[" + name + "] Waiting for server response...");
+    LOG("[" + m_name + "] Waiting for server response...");
 
     // Receive response header
     ResponseHeader rh{};
@@ -99,16 +97,21 @@ bool Client::doRegister(const std::string & name, const std::string & dataDir)
     std::memcpy(id.data(), payloadOut.data(), UUID_SIZE);
     m_clientId = id;
 
-    // Save identity
-    if (!Utils::saveMeInfo(name, m_clientId, privKeyDER, userDir)) {
+    //// Save identity (via both Utils and IdentityManager for transition)
+    //if (!Utils::saveMeInfo(m_name, m_clientId, privKeyDER, userDir)) {
+    //    std::cerr << "Failed to save me.info\n";
+    //    return false;
+    //}
+
+    if (!m_identity.save(userDir, m_name, m_clientId, privStr)) {
         std::cerr << "Failed to save me.info\n";
         return false;
     }
 
-    LOG("[" + name + "] Registration complete. UUID saved to " + mePath);
-    m_name = name;
+    LOG("[" + m_name + "] Registration complete. UUID saved to " + mePath);
     return true;
 }
+
 
 
 // ===============================
@@ -430,16 +433,15 @@ std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMess
 
         try {
             if (msg.type == (uint8_t)MessageType::SEND_SYM) {
-                std::string name;
-                std::array<uint8_t, 16> uuid{};
-                std::vector<uint8_t> priv;
-                if (!Utils::loadMeInfo(name, uuid, priv, "data/" + m_name)) {
-                    out.text = "(Cannot load private key)";
+                const std::string& privKey = m_identity.getPrivateKey();
+                if (privKey.empty()) {
+                    out.text = "(No private key loaded)";
                     results.push_back(out);
                     continue;
                 }
 
-                RSAPrivateWrapper rsa((const char*)priv.data(), (unsigned int)priv.size());
+                // Use the cached PEM private key
+                RSAPrivateWrapper rsa(privKey);
                 std::string plain = rsa.decrypt((const char*)msg.content.data(),
                     (unsigned int)msg.content.size());
                 if (plain.size() != AESWrapper::DEFAULT_KEYLENGTH) {

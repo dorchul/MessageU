@@ -104,7 +104,7 @@ def handle_client(conn, addr):
 def main():
     port = read_port()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("0.0.0.0", port))
+        s.bind(("0.0.0.0", port))   
         s.listen(5)
         log(f"[SERVER] Listening on port {port}")
 

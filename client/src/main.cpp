@@ -19,17 +19,27 @@ int main() {
     try {
         std::cout << "=== MessageU Client ===\n";
 
-        std::string ip; uint16_t port;
+        std::string ip;
+        uint16_t port;
         if (!Utils::readServerInfo(ip, port)) {
             std::cerr << "Failed to read data/server.info\n";
             return 1;
         }
 
-        std::string dataDir = "data";
+        // === Prompt for user name ===
+        std::string username;
+        std::cout << "Enter user name: ";
+        std::getline(std::cin, username);
+        if (username.empty()) {
+            std::cerr << "User name cannot be empty.\n";
+            return 1;
+        }
+
+        std::string dataDir = "data/" + username;
         std::filesystem::create_directories(dataDir);
 
-        Connection conn;  // will be reused by Client but connect per request
-        Client client(conn, dataDir);
+        Connection conn;
+        Client client(conn, username, dataDir);
         runMenu(client, dataDir);
 
         return 0;
@@ -39,3 +49,4 @@ int main() {
         return 1;
     }
 }
+
