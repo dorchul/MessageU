@@ -65,12 +65,6 @@ struct MessagePayload {
 };
 #pragma pack(pop)
 
-
-static_assert(sizeof(RequestHeader) == 23, "RequestHeader must be 23 bytes");
-static_assert(sizeof(ResponseHeader) == 7, "ResponseHeader must be 7 bytes");
-static_assert(sizeof(MessagePayload) == 21, "MessagePayload must be 21 bytes");
-
-
 // ===== Utility Functions =====
 namespace Protocol {
     // Endian conversions

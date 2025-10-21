@@ -2,6 +2,7 @@
 #include "Connection.h"
 #include "Utils.h"
 #include "Protocol.h"
+#include "KeyManager.h"
 
 #include <iostream>
 #include <fstream>
@@ -183,14 +184,12 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
     using namespace Protocol;
 
     // ===== 1. Check cache first =====
-    auto it = m_cachedPubKeys.find(targetUUIDHex);
-    if (it != m_cachedPubKeys.end()) {
+    if (m_keys.hasPublicKey(targetUUIDHex)) {
         LOG("[602] Using cached public key for " + targetUUIDHex.substr(0, 8));
-        return it->second;
+        return m_keys.getPublicKey(targetUUIDHex);
     }
 
     LOG("[602] No cached public key, requesting from server...");
-
     if (!ensureConnected()) return {};
 
     std::array<uint8_t, UUID_SIZE> targetUUID = Utils::hexToUUID(targetUUIDHex);
@@ -216,7 +215,8 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
     }
 
     if (code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) ||
-        size != UUID_SIZE + PUBKEY_SIZE) {
+        size != UUID_SIZE + PUBKEY_SIZE)
+    {
         std::cerr << "[602] Unexpected response (" << code << ", size=" << size << ").\n";
         return {};
     }
@@ -225,11 +225,12 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
     if (!Utils::recvPayload(m_conn, buffer, size)) return {};
 
     std::vector<uint8_t> pubKey(buffer.begin() + UUID_SIZE, buffer.end());
-    m_cachedPubKeys[targetUUIDHex] = pubKey;
+    m_keys.cachePublicKey(targetUUIDHex, pubKey);
     LOG("[602] Public key cached for " + targetUUIDHex.substr(0, 8));
 
     return pubKey;
 }
+
 
 
 // ===============================
@@ -240,32 +241,26 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
     const std::vector<uint8_t>& content)
 {
     using namespace Protocol;
-    
+
     if (!ensureConnected()) return false;
 
     const std::string targetHex = Utils::uuidToHex(toClient);
     std::vector<uint8_t> finalContent;
 
     if (type == MessageType::REQUEST_SYM) {
-        LOG("[603/Type 1] Requesting symmetric key...");
-
-        // ===== Check if we already have a symmetric key =====
-        auto symIt = m_symmKeys.find(targetHex);
-        if (symIt != m_symmKeys.end()) {
+        if (m_keys.hasSymmetricKey(targetHex)) {
             LOG("[603/Type 1] Symmetric key already cached. Skipping REQUEST_SYM.");
-            return true; // No need to request again
+            return true;
         }
     }
 
     else if (type == MessageType::SEND_SYM) {
         LOG("[603/Type 2] Preparing to send symmetric key...");
 
-        std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
-
         // ===== If cached AES key exists, reuse it =====
-        auto symIt = m_symmKeys.find(targetHex);
-        if (symIt != m_symmKeys.end()) {
-            key = symIt->second;
+        std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
+        if (m_keys.hasSymmetricKey(targetHex)) {
+            key = m_keys.getSymmetricKey(targetHex);
             LOG("[603/Type 2] Using cached AES key for this peer.");
         }
         else {
@@ -273,15 +268,13 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
             unsigned char rawKey[AESWrapper::DEFAULT_KEYLENGTH]{};
             AESWrapper::GenerateKey(rawKey, AESWrapper::DEFAULT_KEYLENGTH);
             std::memcpy(key.data(), rawKey, AESWrapper::DEFAULT_KEYLENGTH);
-            m_symmKeys[targetHex] = key;
-            LOG("[603/Type 2] New AES key generated and cached.");
+            m_keys.cacheSymmetricKey(targetHex, key);
         }
 
         // ===== Retrieve recipient public key =====
         std::vector<uint8_t> pubKey;
-        auto it = m_cachedPubKeys.find(targetHex);
-        if (it != m_cachedPubKeys.end()) {
-            pubKey = it->second;
+        if (m_keys.hasPublicKey(targetHex)) {
+            pubKey = m_keys.getPublicKey(targetHex);
             LOG("[603/Type 2] Using cached public key.");
         }
         else {
@@ -305,17 +298,14 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
         LOG("[603/Type 2] AES key encrypted with recipient RSA and ready to send.");
     }
 
-
-
     else if (type == MessageType::TEXT) {
         LOG("[603/Type 3] Encrypting plaintext with stored symmetric key...");
-        auto it = m_symmKeys.find(targetHex);
-        if (it == m_symmKeys.end()) {
+        if (!m_keys.hasSymmetricKey(targetHex)) {
             std::cerr << "No symmetric key in memory for this peer.\n";
             return false;
         }
-
-        AESWrapper aes(it->second.data(), AESWrapper::DEFAULT_KEYLENGTH);
+        auto key = m_keys.getSymmetricKey(targetHex);
+        AESWrapper aes(key.data(), AESWrapper::DEFAULT_KEYLENGTH);
         std::string cipher = aes.encrypt(reinterpret_cast<const char*>(content.data()),
             static_cast<unsigned int>(content.size()));
         finalContent.assign(cipher.begin(), cipher.end());
@@ -364,6 +354,7 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
 
     return true;
 }
+
 
 // ===============================
 // Waiting Messages (604 → 2104)
@@ -440,7 +431,6 @@ std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMess
                     continue;
                 }
 
-                // Use the cached PEM private key
                 RSAPrivateWrapper rsa(privKey);
                 std::string plain = rsa.decrypt((const char*)msg.content.data(),
                     (unsigned int)msg.content.size());
@@ -452,22 +442,23 @@ std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMess
 
                 std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
                 std::memcpy(key.data(), plain.data(), AESWrapper::DEFAULT_KEYLENGTH);
-                m_symmKeys[out.fromHex] = key;
+                m_keys.cacheSymmetricKey(out.fromHex, key);
                 out.text = "[AES key cached in memory]";
             }
             else if (msg.type == (uint8_t)MessageType::TEXT) {
-                auto it = m_symmKeys.find(out.fromHex);
-                if (it == m_symmKeys.end()) {
+                if (!m_keys.hasSymmetricKey(out.fromHex)) {
                     out.text = "(No AES key in memory for sender)";
                     results.push_back(out);
                     continue;
                 }
 
-                AESWrapper aes(it->second.data(), AESWrapper::DEFAULT_KEYLENGTH);
+                auto key = m_keys.getSymmetricKey(out.fromHex);
+                AESWrapper aes(key.data(), AESWrapper::DEFAULT_KEYLENGTH);
                 std::string plain = aes.decrypt((const char*)msg.content.data(),
                     (unsigned int)msg.content.size());
                 out.text = plain;
             }
+
             else if (msg.type == (uint8_t)MessageType::REQUEST_SYM) {
                 out.text = "[Request for symmetric key]";
             }

@@ -81,16 +81,17 @@ public:
 
     void cacheSymmetricKey(const std::string& peerHex,
         const std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>& key) {
-        m_symmKeys[peerHex] = key;
+        m_keys.cacheSymmetricKey(peerHex, key);
     }
 
     bool hasSymmetricKey(const std::string& peerHex) const {
-        return m_symmKeys.find(peerHex) != m_symmKeys.end();
+        return m_keys.hasSymmetricKey(peerHex);
     }
 
     std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> getSymmetricKey(const std::string& peerHex) const {
-        return m_symmKeys.at(peerHex);
+        return m_keys.getSymmetricKey(peerHex);
     }
+
 
 
 private:
@@ -98,8 +99,6 @@ private:
     std::array<uint8_t, 16> m_clientId{};
     std::string m_name;
     std::vector<uint8_t> m_pubKey;
-    std::unordered_map<std::string, std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>> m_symmKeys;
-    std::unordered_map<std::string, std::vector<uint8_t>> m_cachedPubKeys;
     IdentityManager m_identity;
     KeyManager m_keys;
     bool ensureConnected();
