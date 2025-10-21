@@ -4,14 +4,8 @@
 #include <vector>
 #include <array>
 #include <cstdint>
-#include <iostream>
-#include <unordered_map>
 
 #include "Protocol.h"
-#include "Utils.h"
-#include "AESWrapper.h"
-#include "Base64Wrapper.h"
-#include "RSAWrapper.h"
 #include "IdentityManager.h"
 #include "KeyManager.h"
 
@@ -41,58 +35,40 @@ struct DecodedMessage {
 // ===============================
 class Client {
 public:
-    explicit Client(Connection& conn, const std::string& name, const std::string& dataDir)
-        : m_conn(conn), m_name(name)
-    {
-        if (m_identity.load(dataDir, m_name, m_clientId)) {
-            std::cout << "[Client] Loaded identity: \"" << m_name
-                << "\" from " << dataDir << "/me.info\n";
-        }
-        else {
-            std::memset(m_clientId.data(), 0, 16);
-            std::cout << "[Client] No existing identity found in " << dataDir << "\n";
-        }
-
-        std::cout << std::endl;
-    }
-
-
-
+    Client(Connection& conn, const std::string& name, const std::string& dataDir);
 
     // ===== Protocol operations =====
     bool doRegister(const std::string& dataDir);  // 600
-    
-    std::vector<std::pair<std::array<uint8_t, 16>, std::string>> requestClientsList(); // 601
-    
+    std::vector<std::pair<std::array<uint8_t, 16>, std::string>> requestClientsList() const; // 601
     std::vector<uint8_t> requestPublicKey(const std::string& targetUUID);  // 602
-    
     bool sendMessage(const std::array<uint8_t, 16>& toClient,
         MessageType type,
-        const std::vector<uint8_t>& content);                 // 603
-    
-    std::vector<PendingMessage> requestWaitingMessages();                  // 604
+        const std::vector<uint8_t>& content);  // 603
+    std::vector<PendingMessage> requestWaitingMessages() const;  // 604
 
     // ===== Decode & process incoming messages =====
     std::vector<DecodedMessage> decodeMessages(const std::vector<PendingMessage>& msgs);
 
     // ===== Accessors =====
-    const std::array<uint8_t, 16>& id() const { return m_clientId; }
-    const std::string& name() const { return m_name; }
+    const std::array<uint8_t, 16>& id() const noexcept { return m_clientId; }
+    const std::string& name() const noexcept { return m_name; }
 
+    // ===== Symmetric key operations (pass-through to KeyManager) =====
     void cacheSymmetricKey(const std::string& peerHex,
         const std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>& key) {
         m_keys.cacheSymmetricKey(peerHex, key);
     }
-
     bool hasSymmetricKey(const std::string& peerHex) const {
         return m_keys.hasSymmetricKey(peerHex);
     }
-
-    std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> getSymmetricKey(const std::string& peerHex) const {
+    std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>
+        getSymmetricKey(const std::string& peerHex) const {
         return m_keys.getSymmetricKey(peerHex);
     }
 
-
+private:
+    bool ensureConnected() const;
+    bool loadIdentity(const std::string& dataDir);
 
 private:
     Connection& m_conn;
@@ -101,5 +77,4 @@ private:
     std::vector<uint8_t> m_pubKey;
     IdentityManager m_identity;
     KeyManager m_keys;
-    bool ensureConnected();
 };
