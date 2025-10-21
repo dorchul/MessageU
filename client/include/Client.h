@@ -39,15 +39,19 @@ public:
 
     // ===== Protocol operations =====
     bool doRegister(const std::string& dataDir);  // 600
+    
     std::vector<std::pair<std::array<uint8_t, 16>, std::string>> requestClientsList() const; // 601
+    
     std::vector<uint8_t> requestPublicKey(const std::string& targetUUID);  // 602
+    
     bool sendMessage(const std::array<uint8_t, 16>& toClient,
         MessageType type,
         const std::vector<uint8_t>& content);  // 603
+    
     std::vector<PendingMessage> requestWaitingMessages() const;  // 604
 
     // ===== Decode & process incoming messages =====
-    std::vector<DecodedMessage> decodeMessages(const std::vector<PendingMessage>& msgs);
+    std::vector<DecodedMessage> fetchMessages();  // 604: fetch + decrypt
 
     // ===== Accessors =====
     const std::array<uint8_t, 16>& id() const noexcept { return m_clientId; }

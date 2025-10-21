@@ -92,8 +92,7 @@ void runMenu(Client& client, const std::string& dataDir)
             break;
         }
         case 140: {
-            auto msgs = client.requestWaitingMessages();
-            auto decoded = client.decodeMessages(msgs);
+            auto decoded = client.fetchMessages();
             displayMessages(decoded);
             break;
         }

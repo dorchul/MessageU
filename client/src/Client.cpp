@@ -16,10 +16,11 @@ static const bool VERBOSE = true;
 #define LOG(x) if (VERBOSE) { std::cout << x << std::endl; }
 
 // ==========================================================
-// Internal helper functions (used only by sendMessage 603)
+// Internal helper functions
 // Placed in an anonymous namespace -> file-local scope
 // ==========================================================
 namespace {
+
     /// Generate or reuse a symmetric AES-128 key for a given peer.
     /// If not cached, generates a new key, stores it in KeyManager, and returns it.
     std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>
@@ -72,11 +73,98 @@ namespace {
         return (Protocol::fromLittleEndian16(resp.code) ==
             static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED));
     }
+
+    /// Decrypts a symmetric AES key from a SEND_SYM message using the client's RSA private key.
+    /// Returns a user-readable text and caches the AES key in KeyManager.
+    std::string decryptSymmetricKeyRSA(const PendingMessage& msg,
+        IdentityManager& identity,
+        KeyManager& keys,
+        const std::string& senderHex)
+    {
+        const std::string& privKey = identity.getPrivateKey();
+        if (privKey.empty())
+            return "(No private key loaded)";
+
+        RSAPrivateWrapper rsa(privKey);
+        std::string plain = rsa.decrypt(reinterpret_cast<const char*>(msg.content.data()),
+            static_cast<unsigned int>(msg.content.size()));
+
+        if (plain.size() != AESWrapper::DEFAULT_KEYLENGTH)
+            return "(Invalid AES key size)";
+
+        std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
+        std::memcpy(key.data(), plain.data(), AESWrapper::DEFAULT_KEYLENGTH);
+        keys.cacheSymmetricKey(senderHex, key);
+
+        LOG("[KeyManager] Cached AES key in memory for " + senderHex.substr(0, 8));
+        return "[AES key cached in memory]";
+    }
+
+    /// Decrypts a TEXT message using the cached AES key.
+    /// Returns the plaintext or an explanatory message if missing.
+    std::string decryptTextAES(const PendingMessage& msg,
+        KeyManager& keys,
+        const std::string& senderHex)
+    {
+        if (!keys.hasSymmetricKey(senderHex))
+            return "(No AES key in memory for sender)";
+
+        auto key = keys.getSymmetricKey(senderHex);
+        AESWrapper aes(key.data(), AESWrapper::DEFAULT_KEYLENGTH);
+        return aes.decrypt(reinterpret_cast<const char*>(msg.content.data()),
+            static_cast<unsigned int>(msg.content.size()));
+    }
+
+    /// Returns a short readable description for REQUEST_SYM messages.
+    std::string decodeRequestSym()
+    {
+        return "[Request for symmetric key]";
+    }
+    
+    /// Decode a batch of pending messages using the client's managers.
+    std::vector<DecodedMessage>
+        decodeMessages(const std::vector<PendingMessage>& msgs,
+            IdentityManager& identity,
+            KeyManager& keys) {
+        std::vector<DecodedMessage> results;
+        if (msgs.empty()) return results;
+
+        for (const auto& msg : msgs) {
+            DecodedMessage out{
+                Utils::uuidToHex(msg.fromId),
+                static_cast<MessageType>(msg.type),
+                ""
+            };
+
+            try {
+                switch (out.type) {
+                case MessageType::SEND_SYM:
+                    out.text = decryptSymmetricKeyRSA(msg, identity, keys, out.fromHex);
+                    break;
+                case MessageType::TEXT:
+                    out.text = decryptTextAES(msg, keys, out.fromHex);
+                    break;
+                case MessageType::REQUEST_SYM:
+                    out.text = decodeRequestSym();
+                    break;
+                default:
+                    out.text = "(Unknown message type)";
+                    break;
+                }
+            }
+            catch (...) {
+                out.text = "(Decryption failed)";
+            }
+
+            results.push_back(std::move(out));
+        }
+        return results;
+    }
+
 } // namespace
 
-
 // ===============================
-// Constructor & Helpers
+// Constructor
 // ===============================
 Client::Client(Connection& conn, const std::string& name, const std::string& dataDir)
     : m_conn(conn), m_name(name)
@@ -87,6 +175,9 @@ Client::Client(Connection& conn, const std::string& name, const std::string& dat
     }
 }
 
+// ===============================
+// Helpers
+// ===============================
 bool Client::loadIdentity(const std::string& dataDir)
 {
     if (m_identity.load(dataDir, m_name, m_clientId)) {
@@ -96,6 +187,15 @@ bool Client::loadIdentity(const std::string& dataDir)
     return false;
 }
 
+bool Client::ensureConnected() const
+{
+    std::string ip; uint16_t port;
+    if (!Utils::readServerInfo(ip, port) || !m_conn.connectToServer(ip, port)) {
+        std::cerr << "Failed to connect to server.\n";
+        return false;
+    }
+    return true;
+}
 // ===============================
 // Register (600 → 2100)
 // ===============================
@@ -358,70 +458,15 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
     return messages;
 }
 
-// ===============================
-// Decode messages
-// ===============================
-std::vector<DecodedMessage> Client::decodeMessages(const std::vector<PendingMessage>& msgs)
-{
-    std::vector<DecodedMessage> results;
-    if (msgs.empty()) return results;
 
-    for (const auto& msg : msgs) {
-        DecodedMessage out{ Utils::uuidToHex(msg.fromId),
-                            static_cast<MessageType>(msg.type),
-                            "" };
-
-        try {
-            if (msg.type == (uint8_t)MessageType::SEND_SYM) {
-                const std::string& privKey = m_identity.getPrivateKey();
-                if (privKey.empty()) { out.text = "(No private key loaded)"; results.push_back(out); continue; }
-
-                RSAPrivateWrapper rsa(privKey);
-                std::string plain = rsa.decrypt((const char*)msg.content.data(),
-                                                (unsigned int)msg.content.size());
-                if (plain.size() != AESWrapper::DEFAULT_KEYLENGTH) {
-                    out.text = "(Invalid AES key size)";
-                } else {
-                    std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH> key{};
-                    std::memcpy(key.data(), plain.data(), AESWrapper::DEFAULT_KEYLENGTH);
-                    m_keys.cacheSymmetricKey(out.fromHex, key);
-                    out.text = "[AES key cached in memory]";
-                }
-            }
-            else if (msg.type == (uint8_t)MessageType::TEXT) {
-                if (!m_keys.hasSymmetricKey(out.fromHex)) {
-                    out.text = "(No AES key in memory for sender)";
-                } else {
-                    auto key = m_keys.getSymmetricKey(out.fromHex);
-                    AESWrapper aes(key.data(), AESWrapper::DEFAULT_KEYLENGTH);
-                    out.text = aes.decrypt((const char*)msg.content.data(),
-                                           (unsigned int)msg.content.size());
-                }
-            }
-            else if (msg.type == (uint8_t)MessageType::REQUEST_SYM) {
-                out.text = "[Request for symmetric key]";
-            } else {
-                out.text = "(Unknown message type)";
-            }
-        }
-        catch (...) {
-            out.text = "(Decryption failed)";
-        }
-
-        results.push_back(out);
+std::vector<DecodedMessage> Client::fetchMessages() {
+    auto msgs = requestWaitingMessages();  // 604
+    if (msgs.empty()) {
+        LOG("[604] No waiting messages.");
+        return {};
     }
-    return results;
+    LOG("[604] Decoding " + std::to_string(msgs.size()) + " messages...");
+    return decodeMessages(msgs, m_identity, m_keys);  // file-local helper
 }
 
-// ===============================
-// Connection helper
-// ===============================
-bool Client::ensureConnected() const
-{
-    std::string ip; uint16_t port;
-    if (!Utils::readServerInfo(ip, port) || !m_conn.connectToServer(ip, port)) {
-        std::cerr << "Failed to connect to server.\n";
-        return false;
-    }
-    return true;
-}
+
