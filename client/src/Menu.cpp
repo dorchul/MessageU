@@ -1,11 +1,12 @@
 #include "Menu.h"
 #include "Utils.h"
-#include "client.h"
+#include "Client.h"
 
 #include <iostream>
 #include <vector>
 #include <array>
 #include <iomanip>
+#include <stdexcept>
 
 void displayMessages(const std::vector<DecodedMessage>& decoded)
 {
@@ -18,9 +19,9 @@ void displayMessages(const std::vector<DecodedMessage>& decoded)
         std::string typeName;
         switch (msg.type) {
         case MessageType::REQUEST_SYM: typeName = "Request Symmetric Key"; break;
-        case MessageType::SEND_SYM: typeName = "Encrypted AES Key"; break;
-        case MessageType::TEXT: typeName = "Encrypted Text"; break;
-        default: typeName = "Unknown"; break;
+        case MessageType::SEND_SYM:     typeName = "Encrypted AES Key"; break;
+        case MessageType::TEXT:         typeName = "Encrypted Text"; break;
+        default:                        typeName = "Unknown"; break;
         }
 
         std::cout << "From: " << msg.fromHex
@@ -31,7 +32,7 @@ void displayMessages(const std::vector<DecodedMessage>& decoded)
 }
 
 // ===================================================
-// Interactive Menu
+// Interactive Menu (exception-safe)
 // ===================================================
 void runMenu(Client& client, const std::string& dataDir)
 {
@@ -51,6 +52,7 @@ void runMenu(Client& client, const std::string& dataDir)
         if (!(std::cin >> choice)) {
             std::cin.clear();
             std::cin.ignore(10000, '\n');
+            std::cout << "[!] Invalid option.\n";
             continue;
         }
 
@@ -59,78 +61,91 @@ void runMenu(Client& client, const std::string& dataDir)
             break;
         }
 
-        switch (choice) {
-        case 110: {
-            if (client.doRegister(dataDir))
+        try {
+            switch (choice) {
+            case 110: {
+                client.doRegister(dataDir);
                 std::cout << "[+] Registered successfully as " << client.name() << "\n";
-            else
-                std::cout << "[!] Registration failed.\n";
-            break;
-        }
-        case 120: {
-            auto list = client.requestClientsList();
-            if (list.empty()) {
-                std::cout << "[!] No clients found.\n";
                 break;
             }
-            std::cout << "--- Clients List ---\n";
-            for (const auto& [uuid, name] : list)
-                std::cout << "Name: " << name
-                << " | UUID: " << Utils::uuidToHex(uuid) << "\n";
-            break;
-        }
-        case 130: {
-            std::string target;
-            std::cout << "Enter target UUID (hex): ";
-            std::cin >> target;
-            auto key = client.requestPublicKey(target);
-            if (key.empty())
-                std::cout << "[!] Failed to retrieve key.\n";
-            else {
+
+            case 120: {
+                auto list = client.requestClientsList();
+                if (list.empty()) {
+                    std::cout << "[!] No clients found.\n";
+                    break;
+                }
+                std::cout << "--- Clients List ---\n";
+                for (const auto& [uuid, name] : list)
+                    std::cout << "Name: " << name
+                    << " | UUID: " << Utils::uuidToHex(uuid) << "\n";
+                break;
+            }
+
+            case 130: {
+                std::string target;
+                std::cout << "Enter target UUID (hex): ";
+                std::cin >> target;
+                auto key = client.requestPublicKey(target);
                 std::cout << "[+] Public key retrieved and cached (" << key.size() << " bytes)\n";
-            }
-            break;
-        }
-        case 140: {
-            auto decoded = client.fetchMessages();
-            displayMessages(decoded);
-            break;
-        }
-        case 150:
-        case 151:
-        case 152: {
-            std::string targetHex;
-            std::cout << "Enter recipient UUID (hex): ";
-            std::cin >> targetHex;
-
-            MessageType type = MessageType::TEXT;
-            std::vector<uint8_t> content;
-
-            if (choice == 150) {
-                std::string text;
-                std::cout << "Enter message text: ";
-                std::cin.ignore();
-                std::getline(std::cin, text);
-                content.assign(text.begin(), text.end());
-                type = MessageType::TEXT;
-            }
-            else if (choice == 151) {
-                type = MessageType::REQUEST_SYM;
-            }
-            else if (choice == 152) {
-                type = MessageType::SEND_SYM;
+                break;
             }
 
-            auto toUUID = Utils::hexToUUID(targetHex);
-            if (client.sendMessage(toUUID, type, content))
+            case 140: {
+                auto decoded = client.fetchMessages();
+                displayMessages(decoded);
+                break;
+            }
+
+            case 150:
+            case 151:
+            case 152: {
+                std::string targetHex;
+                std::cout << "Enter recipient UUID (hex): ";
+                std::cin >> targetHex;
+
+                MessageType type = MessageType::TEXT;
+                std::vector<uint8_t> content;
+
+                if (choice == 150) {
+                    std::string text;
+                    std::cout << "Enter message text: ";
+                    std::cin.ignore();
+                    std::getline(std::cin, text);
+                    content.assign(text.begin(), text.end());
+                    type = MessageType::TEXT;
+                }
+                else if (choice == 151) {
+                    type = MessageType::REQUEST_SYM;
+                }
+                else if (choice == 152) {
+                    type = MessageType::SEND_SYM;
+                }
+
+                auto toUUID = Utils::hexToUUID(targetHex);
+                client.sendMessage(toUUID, type, content);
                 std::cout << "[+] Message sent successfully.\n";
-            else
-                std::cout << "[!] Failed to send message.\n";
-            break;
+                break;
+            }
+
+            default:
+                std::cout << "[!] Invalid option.\n";
+                break;
+            }
         }
-        default:
-            std::cout << "[!] Invalid option.\n";
-            break;
+        catch (const std::invalid_argument& e) {
+            // for things like invalid stoi() or bad UUID parsing
+            std::cerr << "[Input Error] " << e.what() << "\n";
+        }
+        catch (const std::runtime_error& e) {
+            std::cerr << "[Error] " << e.what() << "\n";
+        }
+        catch (const std::exception& e) {
+            std::cerr << "[Unexpected Error] " << e.what() << "\n";
+        }
+        catch (...) {
+            std::cerr << "[Unknown Error] An unexpected exception occurred.\n";
         }
     }
 }
+

@@ -13,7 +13,8 @@ public:
     bool connectToServer(const std::string& ip, uint16_t port);
     bool sendAll(const uint8_t* data, size_t size);
     bool recvAll(uint8_t* buffer, size_t size);
-    void closeConnection();
+    void closeConnection() noexcept;
+
 
     // === New helper ===
     bool isConnected() const { return connected; }

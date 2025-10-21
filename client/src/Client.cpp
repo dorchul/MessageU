@@ -11,18 +11,16 @@
 #include <iomanip>
 #include <cstring>
 #include <filesystem>
+#include <stdexcept>
 
 static const bool VERBOSE = true;
 #define LOG(x) if (VERBOSE) { std::cout << x << std::endl; }
 
 // ==========================================================
-// Internal helper functions
-// Placed in an anonymous namespace -> file-local scope
+// Internal helper functions (file-local)
 // ==========================================================
 namespace {
 
-    /// Generate or reuse a symmetric AES-128 key for a given peer.
-    /// If not cached, generates a new key, stores it in KeyManager, and returns it.
     std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>
         prepareSymmetricKey(KeyManager& keys, const std::string& peerHex) {
         if (keys.hasSymmetricKey(peerHex))
@@ -39,8 +37,6 @@ namespace {
         return key;
     }
 
-    /// Encrypt an AES symmetric key using the recipient's RSA public key.
-    /// Returns the encrypted key as a byte vector ready for network sending.
     std::vector<uint8_t>
         encryptSymmetricKeyRSA(const std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>& key,
             const std::vector<uint8_t>& pubKey) {
@@ -51,8 +47,6 @@ namespace {
         return std::vector<uint8_t>(enc.begin(), enc.end());
     }
 
-    /// Encrypt a plaintext message using AES-128 with the provided symmetric key.
-    /// Used for type=TEXT messages.
     std::vector<uint8_t>
         encryptTextAES(const std::vector<uint8_t>& content,
             const std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>& key) {
@@ -62,20 +56,19 @@ namespace {
         return std::vector<uint8_t>(cipher.begin(), cipher.end());
     }
 
-    /// Send a ready-built packet to the server and verify a MESSAGE_RECEIVED response.
-    /// Returns true if transmission succeeded and response code matches.
+    // Throws if server didn’t acknowledge 603 with MESSAGE_RECEIVED
     bool sendMessagePacket(Connection& conn, const std::vector<uint8_t>& packet) {
-        if (!conn.sendAll(packet.data(), packet.size())) return false;
+        conn.sendAll(packet.data(), packet.size()); // may throw
 
         ResponseHeader resp{};
-        if (!Utils::recvResponseHeader(conn, resp)) return false;
+        Utils::recvResponseHeader(conn, resp);      // normalized to host-endian; may throw
 
-        return (Protocol::fromLittleEndian16(resp.code) ==
-            static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED));
+        if (resp.code != static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED)) {
+            throw std::runtime_error("Server did not acknowledge message (2103 expected)");
+        }
+        return true;
     }
 
-    /// Decrypts a symmetric AES key from a SEND_SYM message using the client's RSA private key.
-    /// Returns a user-readable text and caches the AES key in KeyManager.
     std::string decryptSymmetricKeyRSA(const PendingMessage& msg,
         IdentityManager& identity,
         KeyManager& keys,
@@ -100,8 +93,6 @@ namespace {
         return "[AES key cached in memory]";
     }
 
-    /// Decrypts a TEXT message using the cached AES key.
-    /// Returns the plaintext or an explanatory message if missing.
     std::string decryptTextAES(const PendingMessage& msg,
         KeyManager& keys,
         const std::string& senderHex)
@@ -115,13 +106,10 @@ namespace {
             static_cast<unsigned int>(msg.content.size()));
     }
 
-    /// Returns a short readable description for REQUEST_SYM messages.
-    std::string decodeRequestSym()
-    {
+    std::string decodeRequestSym() {
         return "[Request for symmetric key]";
     }
-    
-    /// Decode a batch of pending messages using the client's managers.
+
     std::vector<DecodedMessage>
         decodeMessages(const std::vector<PendingMessage>& msgs,
             IdentityManager& identity,
@@ -161,7 +149,7 @@ namespace {
         return results;
     }
 
-} // namespace
+} // anonymous namespace
 
 // ===============================
 // Constructor
@@ -187,23 +175,28 @@ bool Client::loadIdentity(const std::string& dataDir)
     return false;
 }
 
+// ===============================
+// ensureConnected
+// ===============================
 bool Client::ensureConnected() const
 {
     std::string ip; uint16_t port;
-    if (!Utils::readServerInfo(ip, port) || !m_conn.connectToServer(ip, port)) {
-        std::cerr << "Failed to connect to server.\n";
-        return false;
-    }
+    Utils::readServerInfo(ip, port);
+
+    // Reconnect every time (server is stateless)
+    m_conn.connectToServer(ip, port); // throws on failure
     return true;
 }
+
+
 // ===============================
 // Register (600 → 2100)
 // ===============================
 bool Client::doRegister(const std::string& dataDir)
 {
-    if (!ensureConnected()) return false;
+    ensureConnected(); // reconnect each time (server is stateless)
 
-    std::string mePath = dataDir + "/me.info";
+    const std::string mePath = dataDir + "/me.info";
     if (std::filesystem::exists(mePath)) {
         LOG("[" + m_name + "] Already registered, using " + mePath);
         return true;
@@ -218,31 +211,25 @@ bool Client::doRegister(const std::string& dataDir)
     std::vector<uint8_t> pubKeyDER(pubStr.begin(), pubStr.end());
     pubKeyDER.resize(PUBKEY_SIZE, 0);
 
-    // === Build full register request ===
+    // Build & send register request
     auto packet = Protocol::buildRegisterRequest(m_name, pubKeyDER);
+    m_conn.sendAll(packet.data(), packet.size()); // send via persistent connection
 
-    // === Send ===
-    if (!m_conn.sendAll(packet.data(), packet.size()))
-        return false;
-
-    // === Receive response ===
+    // Receive response
     ResponseHeader rh{};
-    if (!Utils::recvResponseHeader(m_conn, rh) ||
-        rh.code != static_cast<uint16_t>(ResponseCode::REGISTRATION_OK) ||
+    Utils::recvResponseHeader(m_conn, rh);
+    if (rh.code != static_cast<uint16_t>(ResponseCode::REGISTRATION_OK) ||
         rh.payloadSize != UUID_SIZE)
     {
-        std::cerr << "Invalid registration response\n";
-        return false;
+        throw std::runtime_error("Invalid registration response");
     }
 
     std::vector<uint8_t> payloadOut;
-    if (!Utils::recvPayload(m_conn, payloadOut, UUID_SIZE)) return false;
+    Utils::recvPayload(m_conn, payloadOut, UUID_SIZE);
     std::memcpy(m_clientId.data(), payloadOut.data(), UUID_SIZE);
 
-    if (!m_identity.save(dataDir, m_name, m_clientId, privStr)) {
-        std::cerr << "Failed to save me.info\n";
-        return false;
-    }
+    if (!m_identity.save(dataDir, m_name, m_clientId, privStr))
+        throw std::runtime_error("Failed to save me.info");
 
     LOG("[" + m_name + "] Registration complete. UUID saved to " + mePath);
     return true;
@@ -258,36 +245,33 @@ Client::requestClientsList() const
     using namespace Protocol;
     std::vector<std::pair<std::array<uint8_t, UUID_SIZE>, std::string>> clients;
 
-    if (!ensureConnected()) return clients;
+    ensureConnected(); // reconnect each time (server is stateless)
 
-    RequestHeader header{};
-    memcpy(header.clientID, m_clientId.data(), UUID_SIZE);
-    header.version = VERSION;
-    header.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_CLIENTS_LIST));
-    header.payloadSize = toLittleEndian32(0);
-
-    if (!Utils::sendRequestHeader(m_conn, header)) return clients;
+    auto packet = Protocol::buildClientListRequest(m_clientId.data());
+    m_conn.sendAll(packet.data(), packet.size()); // use persistent connection
 
     ResponseHeader resp{};
-    if (!Utils::recvResponseHeader(m_conn, resp)) return clients;
+    Utils::recvResponseHeader(m_conn, resp); // host-endian
 
-    const uint16_t code = fromLittleEndian16(resp.code);
-    const uint32_t size = fromLittleEndian32(resp.payloadSize);
-    if (code != static_cast<uint16_t>(ResponseCode::CLIENTS_LIST)) return clients;
+    if (resp.code != static_cast<uint16_t>(ResponseCode::CLIENTS_LIST))
+        throw std::runtime_error("Unexpected response to 601 (expected 2101)");
 
     std::vector<uint8_t> payload;
-    if (!Utils::recvPayload(m_conn, payload, size)) return clients;
+    Utils::recvPayload(m_conn, payload, resp.payloadSize);
 
     const size_t entrySize = UUID_SIZE + NAME_SIZE;
     for (size_t offset = 0; offset + entrySize <= payload.size(); offset += entrySize) {
-        std::array<uint8_t, UUID_SIZE> uuid{};
-        memcpy(uuid.data(), payload.data() + offset, UUID_SIZE);
-        offset += UUID_SIZE;
+        size_t idx = offset;
 
-        std::string raw(reinterpret_cast<char*>(payload.data() + offset), NAME_SIZE);
+        std::array<uint8_t, UUID_SIZE> uuid{};
+        std::memcpy(uuid.data(), payload.data() + idx, UUID_SIZE);
+        idx += UUID_SIZE;
+
+        std::string raw(reinterpret_cast<char*>(payload.data() + idx), NAME_SIZE);
         std::string name = raw.substr(0, raw.find('\0'));
         clients.emplace_back(uuid, name);
     }
+
 
     return clients;
 }
@@ -304,34 +288,31 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
         return m_keys.getPublicKey(targetUUIDHex);
     }
 
-    if (!ensureConnected()) return {};
+    ensureConnected(); // reconnect before each request (server closes after response)
     LOG("[602] Requesting public key for " + targetUUIDHex.substr(0, 8));
 
-    std::array<uint8_t, UUID_SIZE> targetUUID = Utils::hexToUUID(targetUUIDHex);
+    const std::array<uint8_t, UUID_SIZE> targetUUID = Utils::hexToUUID(targetUUIDHex);
 
-    // === Build request ===
     auto packet = Protocol::buildGetPublicKeyRequest(m_clientId.data(), targetUUID);
-    if (!m_conn.sendAll(packet.data(), packet.size())) return {};
+    m_conn.sendAll(packet.data(), packet.size()); // use persistent connection
 
-    // === Receive ===
     ResponseHeader resp{};
-    if (!Utils::recvResponseHeader(m_conn, resp)) return {};
+    Utils::recvResponseHeader(m_conn, resp); // host-endian
 
-    const uint16_t code = fromLittleEndian16(resp.code);
-    const uint32_t size = fromLittleEndian32(resp.payloadSize);
-    if (code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) ||
-        size != UUID_SIZE + PUBKEY_SIZE)
-        return {};
+    if (resp.code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) ||
+        resp.payloadSize != UUID_SIZE + PUBKEY_SIZE)
+    {
+        throw std::runtime_error("Unexpected response to 602 (expected 2102 with fixed size)");
+    }
 
     std::vector<uint8_t> buffer;
-    if (!Utils::recvPayload(m_conn, buffer, size)) return {};
+    Utils::recvPayload(m_conn, buffer, resp.payloadSize);
 
     std::vector<uint8_t> pubKey(buffer.begin() + UUID_SIZE, buffer.end());
     m_keys.cachePublicKey(targetUUIDHex, pubKey);
     LOG("[602] Cached public key for " + targetUUIDHex.substr(0, 8));
     return pubKey;
 }
-
 
 // ===============================
 // Send Message (603 → 2103)
@@ -341,7 +322,6 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
     const std::vector<uint8_t>& content)
 {
     using namespace Protocol;
-    if (!ensureConnected()) return false;
 
     const std::string targetHex = Utils::uuidToHex(toClient);
     std::vector<uint8_t> finalContent;
@@ -356,39 +336,38 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
 
     case MessageType::SEND_SYM: {
         auto key = prepareSymmetricKey(m_keys, targetHex);
+
+        // fetch or request the public key first
         auto pubKey = m_keys.hasPublicKey(targetHex)
             ? m_keys.getPublicKey(targetHex)
-            : requestPublicKey(targetHex);
+            : requestPublicKey(targetHex);  // may reconnect internally but we don't care yet
 
-        if (!ensureConnected()) {  // <--- add this
-            std::cerr << "Failed to reconnect after requesting public key.\n";
-            return false;
-        }
+        if (pubKey.size() != RSAPublicWrapper::KEYSIZE)
+            throw std::runtime_error("Invalid RSA public key size for SEND_SYM");
 
-        if (pubKey.size() != RSAPublicWrapper::KEYSIZE) return false;
         finalContent = encryptSymmetricKeyRSA(key, pubKey);
         break;
     }
 
-
     case MessageType::TEXT:
-        if (!m_keys.hasSymmetricKey(targetHex)) {
-            std::cerr << "No symmetric key in memory for this peer.\n";
-            return false;
-        }
+        if (!m_keys.hasSymmetricKey(targetHex))
+            throw std::runtime_error("No symmetric key in memory for this peer");
         finalContent = encryptTextAES(content, m_keys.getSymmetricKey(targetHex));
         break;
 
     default:
-        std::cerr << "Unsupported MessageType.\n";
-        return false;
+        throw std::runtime_error("Unsupported MessageType");
     }
+
+    // connect only once, *after* possible 602 sub-request
+    ensureConnected();
 
     auto packet = Protocol::buildSendMessageRequest(
         m_clientId.data(), toClient.data(), type, finalContent);
 
     return sendMessagePacket(m_conn, packet);
 }
+
 
 // ===============================
 // Waiting Messages (604 → 2104)
@@ -397,23 +376,23 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
 {
     using namespace Protocol;
     std::vector<PendingMessage> messages;
-    if (!ensureConnected()) return messages;
 
-    // === Build request ===
+    ensureConnected(); // reconnect each time (server closes after response)
+
     auto packet = Protocol::buildGetWaitingMessagesRequest(m_clientId.data());
-    if (!m_conn.sendAll(packet.data(), packet.size())) return messages;
+    m_conn.sendAll(packet.data(), packet.size()); // use persistent connection
 
-    // === Receive ===
     ResponseHeader resp{};
-    if (!Utils::recvResponseHeader(m_conn, resp)) return messages;
+    Utils::recvResponseHeader(m_conn, resp); // host-endian
 
-    const uint16_t code = fromLittleEndian16(resp.code);
-    const uint32_t payloadSize = fromLittleEndian32(resp.payloadSize);
-    if (code != static_cast<uint16_t>(ResponseCode::WAITING_MESSAGES) || payloadSize == 0)
-        return messages;
+    if (resp.code != static_cast<uint16_t>(ResponseCode::WAITING_MESSAGES))
+        throw std::runtime_error("Unexpected response to 604 (expected 2104)");
+
+    if (resp.payloadSize == 0)
+        return messages; // no messages is fine
 
     std::vector<uint8_t> buffer;
-    if (!Utils::recvPayload(m_conn, buffer, payloadSize)) return messages;
+    Utils::recvPayload(m_conn, buffer, resp.payloadSize);
 
     size_t offset = 0;
     while (offset + UUID_SIZE + MSG_ID_SIZE + MSG_TYPE_SIZE + CONTENT_SIZE <= buffer.size()) {
@@ -421,11 +400,13 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
         std::memcpy(msg.fromId.data(), &buffer[offset], UUID_SIZE);
         offset += UUID_SIZE;
 
-        msg.id = fromLittleEndian32(*reinterpret_cast<uint32_t*>(&buffer[offset]));
+        msg.id = *reinterpret_cast<const uint32_t*>(&buffer[offset]);
+        msg.id = Protocol::fromLittleEndian32(msg.id);
         offset += MSG_ID_SIZE;
 
         msg.type = buffer[offset++];
-        uint32_t msgSize = fromLittleEndian32(*reinterpret_cast<uint32_t*>(&buffer[offset]));
+        uint32_t msgSize = *reinterpret_cast<const uint32_t*>(&buffer[offset]);
+        msgSize = Protocol::fromLittleEndian32(msgSize);
         offset += CONTENT_SIZE;
 
         if (offset + msgSize > buffer.size()) break;
@@ -434,15 +415,18 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
 
         messages.push_back(std::move(msg));
     }
+
     return messages;
 }
 
+
+
 std::vector<DecodedMessage> Client::fetchMessages() {
-    auto msgs = requestWaitingMessages();  // 604
+    auto msgs = requestWaitingMessages();  // may throw
     if (msgs.empty()) {
         LOG("[604] No waiting messages.");
         return {};
     }
     LOG("[604] Decoding " + std::to_string(msgs.size()) + " messages...");
-    return decodeMessages(msgs, m_identity, m_keys);  // file-local helper
+    return decodeMessages(msgs, m_identity, m_keys);
 }

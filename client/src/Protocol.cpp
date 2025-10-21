@@ -55,7 +55,7 @@ void testHeaderSerialization() {
     std::cout << "PayloadSize: " << Protocol::fromLittleEndian32(parsed.payloadSize) << "\n";
 }
 
-// ===== Build "Request Clients List" Packet =====
+// ===== Build "Clients List" Request (601) =====
 std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[UUID_SIZE]) {
     RequestHeader header{};
     std::memcpy(header.clientID, clientID, UUID_SIZE);
@@ -69,12 +69,6 @@ std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[UUI
 }
 
 // ===== Build "Send Message" Request (603) =====
-//
-// Format:
-// [Header]
-//   clientID(16) | version(1) | code(2) | payloadSize(4)
-// [Payload]
-//   toClientID(16) | type(1) | contentSize(4) | content(variable)
 std::vector<uint8_t> Protocol::buildSendMessageRequest(
     const uint8_t clientID[UUID_SIZE],
     const uint8_t toClientID[UUID_SIZE],
