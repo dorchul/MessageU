@@ -20,6 +20,13 @@ namespace Utils {
             throw std::runtime_error("Failed to open data/server.info");
         }
 
+        // Basic file size check (prevent abuse or huge files)
+        const auto size = file.tellg();
+        if (size > 1024) {
+            throw std::runtime_error("data/server.info too large or malformed");
+        }
+        file.seekg(0);  // reset to start
+        
         std::string line;
         if (!std::getline(file, line) || line.empty()) {
             throw std::runtime_error("data/server.info is empty or malformed");
@@ -32,7 +39,10 @@ namespace Utils {
         }
 
         try {
-            port = static_cast<uint16_t>(std::stoi(portStr));
+            int p = std::stoi(portStr);                      // store as int first
+            if (p < 0 || p > 65535)                          // range validation
+                throw std::runtime_error("Port number out of range (0–65535)");
+            port = static_cast<uint16_t>(p);
         }
         catch (...) {
             throw std::runtime_error("Invalid port number in data/server.info");
@@ -69,13 +79,19 @@ namespace Utils {
     // Network I/O helpers
     // =====================
     bool sendRequestHeader(Connection& conn, RequestHeader& hdr) {
+        // Compile-time sanity check for struct size
+        static_assert(sizeof(RequestHeader) == REQ_HEADER_SIZE, "Unexpected RequestHeader size");
+        
         hdr.code = Protocol::toLittleEndian16(hdr.code);
         hdr.payloadSize = Protocol::toLittleEndian32(hdr.payloadSize);
-        return conn.sendAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)); // may throw internally
+        return conn.sendAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)); // reinterpret_cast, may throw internally
     }
 
     bool recvResponseHeader(Connection& conn, ResponseHeader& hdr) {
-        conn.recvAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)); // may throw internally
+        // Compile-time sanity check for struct size
+        static_assert(sizeof(ResponseHeader) == RES_HEADER_SIZE, "Unexpected ResponseHeader size");
+        
+        conn.recvAll(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)); // reinterpret_cast, may throw internally
         hdr.code = Protocol::fromLittleEndian16(hdr.code);
         hdr.payloadSize = Protocol::fromLittleEndian32(hdr.payloadSize);
         return true;

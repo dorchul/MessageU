@@ -1,4 +1,7 @@
-#include "KeyManager.h"
+﻿#include "KeyManager.h"
+#include "Protocol.h"
+
+#include <algorithm>
 #include <stdexcept>
 
 // ===============================
@@ -16,6 +19,8 @@ std::vector<uint8_t> KeyManager::getPublicKey(const std::string& uuidHex) const 
 }
 
 void KeyManager::cachePublicKey(const std::string& uuidHex, const std::vector<uint8_t>& pubKey) {
+    if (pubKey.size() > PUBKEY_SIZE)                                   // size guard
+        throw std::runtime_error("KeyManager: public key exceeds PUBKEY_SIZE");
     m_pubKeys[uuidHex] = pubKey;
 }
 
@@ -38,5 +43,13 @@ void KeyManager::cacheSymmetricKey(
     const std::string& uuidHex,
     const std::array<uint8_t, AESWrapper::DEFAULT_KEYLENGTH>& key)
 {
+    if (key.size() != AESWrapper::DEFAULT_KEYLENGTH)                   // redundant safety
+        throw std::runtime_error("KeyManager: invalid AES key length");
+
     m_symKeys[uuidHex] = key;
+}
+
+KeyManager::~KeyManager() noexcept {
+    for (auto& [uuid, key] : m_symKeys)
+        std::fill_n(key.begin(), key.size(), 0);                      // clear RAM
 }

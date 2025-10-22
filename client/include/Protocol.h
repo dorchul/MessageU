@@ -7,11 +7,19 @@
 // ===== Protocol Constants =====
 constexpr uint8_t VERSION = 1;
 constexpr size_t UUID_SIZE = 16;
+constexpr size_t UUID_HEX_LEN = UUID_SIZE * 2;
 constexpr size_t NAME_SIZE = 255;
 constexpr size_t PUBKEY_SIZE = 160;
 constexpr size_t MSG_ID_SIZE = 4;
 constexpr size_t MSG_TYPE_SIZE = 1;
 constexpr size_t CONTENT_SIZE = 4;
+constexpr size_t REQ_HEADER_SIZE = 23;
+constexpr size_t RES_HEADER_SIZE = 7;
+constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10 MB limit
+constexpr size_t MAX_DIRECTORY_BYTES = 1 * 1024 * 1024;
+constexpr size_t MAX_MESSAGE_KB = 256;
+constexpr size_t MAX_MESSAGE_BYTES = MAX_MESSAGE_KB * 1024;
+constexpr size_t MAX_CLIENTS_COUNT = 5000;
 
 // ===== Request Codes =====
 enum class RequestCode : uint16_t {

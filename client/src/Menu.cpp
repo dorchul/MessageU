@@ -1,12 +1,14 @@
 #include "Menu.h"
 #include "Utils.h"
 #include "Client.h"
+#include "Protocol.h"
 
 #include <iostream>
 #include <vector>
 #include <array>
 #include <iomanip>
 #include <stdexcept>
+#include <limits>
 
 void displayMessages(const std::vector<DecodedMessage>& decoded)
 {
@@ -51,10 +53,11 @@ void runMenu(Client& client, const std::string& dataDir)
         int choice = 0;
         if (!(std::cin >> choice)) {
             std::cin.clear();
-            std::cin.ignore(10000, '\n');
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
             std::cout << "[!] Invalid option.\n";
             continue;
         }
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
         if (choice == 0) {
             std::cout << "Goodbye!\n";
@@ -85,7 +88,11 @@ void runMenu(Client& client, const std::string& dataDir)
             case 130: {
                 std::string target;
                 std::cout << "Enter target UUID (hex): ";
-                std::cin >> target;
+                std::getline(std::cin, target);
+                if (target.size() != UUID_HEX_LEN) {
+                    std::cout << "[!] UUID must be " << UUID_HEX_LEN << " hex chars.\n";
+                    break;
+                }
                 auto key = client.requestPublicKey(target);
                 std::cout << "[+] Public key retrieved and cached (" << key.size() << " bytes)\n";
                 break;
@@ -102,7 +109,11 @@ void runMenu(Client& client, const std::string& dataDir)
             case 152: {
                 std::string targetHex;
                 std::cout << "Enter recipient UUID (hex): ";
-                std::cin >> targetHex;
+                std::getline(std::cin, targetHex);
+                if (targetHex.size() != UUID_HEX_LEN) {
+                    std::cout << "[!] UUID must be " << UUID_HEX_LEN << " hex chars.\n";
+                    break;
+                }
 
                 MessageType type = MessageType::TEXT;
                 std::vector<uint8_t> content;
@@ -110,8 +121,12 @@ void runMenu(Client& client, const std::string& dataDir)
                 if (choice == 150) {
                     std::string text;
                     std::cout << "Enter message text: ";
-                    std::cin.ignore();
                     std::getline(std::cin, text);
+                    if (text.size() > MAX_MESSAGE_BYTES) {
+                        std::cout << "[!] Message too long (max "
+                            << MAX_MESSAGE_BYTES / 1024 << " KB).\n";
+                        break;
+                    }
                     content.assign(text.begin(), text.end());
                     type = MessageType::TEXT;
                 }
@@ -134,7 +149,6 @@ void runMenu(Client& client, const std::string& dataDir)
             }
         }
         catch (const std::invalid_argument& e) {
-            // for things like invalid stoi() or bad UUID parsing
             std::cerr << "[Input Error] " << e.what() << "\n";
         }
         catch (const std::runtime_error& e) {
@@ -148,4 +162,3 @@ void runMenu(Client& client, const std::string& dataDir)
         }
     }
 }
-

@@ -56,16 +56,21 @@ namespace {
         return std::vector<uint8_t>(cipher.begin(), cipher.end());
     }
 
-    // Throws if server didn’t acknowledge 603 with MESSAGE_RECEIVED
     bool sendMessagePacket(Connection& conn, const std::vector<uint8_t>& packet) {
-        conn.sendAll(packet.data(), packet.size()); // may throw
+        conn.sendAll(packet.data(), packet.size());
 
         ResponseHeader resp{};
-        Utils::recvResponseHeader(conn, resp);      // normalized to host-endian; may throw
+        Utils::recvResponseHeader(conn, resp);
 
-        if (resp.code != static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED)) {
+        if (resp.code != static_cast<uint16_t>(ResponseCode::MESSAGE_RECEIVED))
             throw std::runtime_error("Server did not acknowledge message (2103 expected)");
-        }
+
+        if (resp.payloadSize != UUID_SIZE + MSG_ID_SIZE)
+            throw std::runtime_error("Invalid payload size in MESSAGE_RECEIVED");
+
+        std::vector<uint8_t> ack(resp.payloadSize);
+        Utils::recvPayload(conn, ack, resp.payloadSize);  // read 20 bytes safely
+
         return true;
     }
 
@@ -256,10 +261,23 @@ Client::requestClientsList() const
     if (resp.code != static_cast<uint16_t>(ResponseCode::CLIENTS_LIST))
         throw std::runtime_error("Unexpected response to 601 (expected 2101)");
 
+    // Validate payload size and cap to prevent DoS
+    const size_t entrySize = UUID_SIZE + NAME_SIZE;
+    
+    if (resp.payloadSize % entrySize != 0)
+        throw std::runtime_error("Malformed CLIENTS_LIST payload size");
+    
+    if (resp.payloadSize > MAX_DIRECTORY_BYTES)
+        throw std::runtime_error("CLIENTS_LIST payload too large");
+    
+    const size_t count = resp.payloadSize / entrySize;
+    
+    if (count > MAX_CLIENTS_COUNT)
+        throw std::runtime_error("CLIENTS_LIST contains too many entries");
+    
     std::vector<uint8_t> payload;
     Utils::recvPayload(m_conn, payload, resp.payloadSize);
 
-    const size_t entrySize = UUID_SIZE + NAME_SIZE;
     for (size_t offset = 0; offset + entrySize <= payload.size(); offset += entrySize) {
         size_t idx = offset;
 
@@ -308,6 +326,10 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
     std::vector<uint8_t> buffer;
     Utils::recvPayload(m_conn, buffer, resp.payloadSize);
 
+    // ensure buffer is as expected
+    if (buffer.size() != UUID_SIZE + PUBKEY_SIZE)
+        throw std::runtime_error("PUBLIC_KEY payload malformed");
+
     std::vector<uint8_t> pubKey(buffer.begin() + UUID_SIZE, buffer.end());
     m_keys.cachePublicKey(targetUUIDHex, pubKey);
     LOG("[602] Cached public key for " + targetUUIDHex.substr(0, 8));
@@ -352,6 +374,9 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
     case MessageType::TEXT:
         if (!m_keys.hasSymmetricKey(targetHex))
             throw std::runtime_error("No symmetric key in memory for this peer");
+        // cap plaintext size before encrypt
+        if (content.size() > MAX_MESSAGE_BYTES)
+            throw std::runtime_error("TEXT message too large");
         finalContent = encryptTextAES(content, m_keys.getSymmetricKey(targetHex));
         break;
 
@@ -391,25 +416,42 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
     if (resp.payloadSize == 0)
         return messages; // no messages is fine
 
+    // cap total buffer size to prevent oversized pulls
+    if (resp.payloadSize > MAX_DIRECTORY_BYTES)
+        throw std::runtime_error("WAITING_MESSAGES payload too large");
+    
     std::vector<uint8_t> buffer;
     Utils::recvPayload(m_conn, buffer, resp.payloadSize);
 
     size_t offset = 0;
-    while (offset + UUID_SIZE + MSG_ID_SIZE + MSG_TYPE_SIZE + CONTENT_SIZE <= buffer.size()) {
+    // bounds checks + memcpy for LE32
+    while (true) {
+        // need at least fixed header part per message
+        if (offset + UUID_SIZE + MSG_ID_SIZE + MSG_TYPE_SIZE + CONTENT_SIZE > buffer.size())
+            break;
+
         PendingMessage msg{};
         std::memcpy(msg.fromId.data(), &buffer[offset], UUID_SIZE);
         offset += UUID_SIZE;
 
-        msg.id = *reinterpret_cast<const uint32_t*>(&buffer[offset]);
-        msg.id = Protocol::fromLittleEndian32(msg.id);
+        uint32_t idLE = 0;                            
+        std::memcpy(&idLE, &buffer[offset], sizeof(idLE));  
+        msg.id = Protocol::fromLittleEndian32(idLE);         
         offset += MSG_ID_SIZE;
 
         msg.type = buffer[offset++];
-        uint32_t msgSize = *reinterpret_cast<const uint32_t*>(&buffer[offset]);
-        msgSize = Protocol::fromLittleEndian32(msgSize);
+
+        uint32_t sizeLE = 0;                                   
+        std::memcpy(&sizeLE, &buffer[offset], sizeof(sizeLE)); 
+        uint32_t msgSize = Protocol::fromLittleEndian32(sizeLE); 
         offset += CONTENT_SIZE;
 
-        if (offset + msgSize > buffer.size()) break;
+        // validate per-message size
+        if (msgSize > MAX_MESSAGE_BYTES)
+            throw std::runtime_error("A single waiting message exceeds allowed size");
+        if (offset + msgSize > buffer.size())
+            break;
+
         msg.content.assign(buffer.begin() + offset, buffer.begin() + offset + msgSize);
         offset += msgSize;
 
@@ -418,6 +460,7 @@ std::vector<PendingMessage> Client::requestWaitingMessages() const
 
     return messages;
 }
+
 
 
 

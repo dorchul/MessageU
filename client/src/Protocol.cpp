@@ -5,10 +5,16 @@
 #include <string>
 #include <array>
 
+// ===== Safety Checks =====
+static_assert(sizeof(RequestHeader) == REQ_HEADER_SIZE, "RequestHeader size mismatch");
+static_assert(sizeof(ResponseHeader) == RES_HEADER_SIZE, "ResponseHeader size mismatch");
+
 // ===== Endian Conversion =====
 static bool isLittleEndian() {
     uint16_t num = 1;
-    return *reinterpret_cast<uint8_t*>(&num) == 1;
+    uint8_t bytes[sizeof(num)];
+    std::memcpy(bytes, &num, sizeof(num));   // safer than reinterpret_cast
+    return bytes[0] == 1;
 }
 
 uint16_t Protocol::toLittleEndian16(uint16_t value) {
@@ -32,6 +38,7 @@ uint32_t Protocol::fromLittleEndian32(uint32_t value) {
     return toLittleEndian32(value);
 }
 
+#ifdef PROTOCOL_SELFTEST
 // ===== Serialization Test =====
 void testHeaderSerialization() {
     RequestHeader req{};
@@ -54,6 +61,20 @@ void testHeaderSerialization() {
     std::cout << "Code: " << Protocol::fromLittleEndian16(parsed.code) << "\n";
     std::cout << "PayloadSize: " << Protocol::fromLittleEndian32(parsed.payloadSize) << "\n";
 }
+#endif
+
+// ===== Internal helpers =====
+namespace {
+    inline void ensurePayloadCap(uint32_t size) {
+        if (size > MAX_PAYLOAD_SIZE)
+            throw std::runtime_error("Protocol: payload exceeds MAX_PAYLOAD_SIZE");
+    }
+
+    inline void ensureMessageCap(size_t size) {
+        if (size > MAX_MESSAGE_BYTES)
+            throw std::runtime_error("Protocol: message exceeds MAX_MESSAGE_BYTES");
+    }
+}
 
 // ===== Build "Clients List" Request (601) =====
 std::vector<uint8_t> Protocol::buildClientListRequest(const uint8_t clientID[UUID_SIZE]) {
@@ -75,6 +96,7 @@ std::vector<uint8_t> Protocol::buildSendMessageRequest(
     MessageType type,
     const std::vector<uint8_t>& content)
 {
+    ensureMessageCap(content.size());
     // ---- Prepare payload ----
     MessagePayload payload{};
     std::memcpy(payload.toClientID, toClientID, UUID_SIZE);
@@ -82,6 +104,7 @@ std::vector<uint8_t> Protocol::buildSendMessageRequest(
     payload.contentSize = toLittleEndian32(static_cast<uint32_t>(content.size()));
 
     const uint32_t payloadSize = sizeof(MessagePayload) + static_cast<uint32_t>(content.size());
+    ensurePayloadCap(payloadSize);
 
     // ---- Build header ----
     RequestHeader header{};
@@ -111,11 +134,12 @@ std::vector<uint8_t> Protocol::buildRegisterRequest(
     const std::string& name,
     const std::vector<uint8_t>& pubKeyDER)
 {
-    if (name.size() > NAME_SIZE)
-        throw std::runtime_error("Name too long for registration request");
+    if (name.size() >= NAME_SIZE)
+        throw std::runtime_error("Protocol: name too long for registration");
 
     // --- Build payload ---
     std::vector<uint8_t> payload(NAME_SIZE + PUBKEY_SIZE, 0);
+    ensurePayloadCap(static_cast<uint32_t>(payload.size()));
     std::memcpy(payload.data(), name.c_str(),
         std::min(name.size() + 1, (size_t)NAME_SIZE));
     std::memcpy(payload.data() + NAME_SIZE, pubKeyDER.data(),
@@ -146,6 +170,7 @@ std::vector<uint8_t> Protocol::buildGetPublicKeyRequest(
     hdr.code = toLittleEndian16(static_cast<uint16_t>(RequestCode::GET_PUBLIC_KEY));
     hdr.payloadSize = toLittleEndian32(UUID_SIZE);
 
+    ensurePayloadCap(UUID_SIZE);
     std::vector<uint8_t> packet(sizeof(RequestHeader) + UUID_SIZE);
     std::memcpy(packet.data(), &hdr, sizeof(RequestHeader));
     std::memcpy(packet.data() + sizeof(RequestHeader),

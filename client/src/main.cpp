@@ -4,12 +4,10 @@
 #include "Protocol.h"
 #include "Menu.h"
 
+#include <regex> 
 #include <iostream>
 #include <filesystem>
-#include <fstream>
-#include <unordered_map>
-#include <sstream>
-#include <iomanip>
+
 
 // ===================================================
 // main()
@@ -26,9 +24,16 @@ int main() {
         std::string username;
         std::cout << "Enter user name: ";
         std::getline(std::cin, username);
-        if (username.empty()) {
-            throw std::runtime_error("User name cannot be empty.");
-        }
+
+        // Basic validation
+        if (username.empty() || username.size() >= NAME_SIZE)
+            throw std::runtime_error("Invalid user name length.");
+        
+        static const std::regex validName("^[A-Za-z0-9_.-]+$");
+        if (!std::regex_match(username, validName))
+            throw std::runtime_error("User name contains invalid characters (use letters, digits, _, ., - only).");
+
+
 
         std::string dataDir = "data/" + username;
         std::filesystem::create_directories(dataDir);
@@ -43,10 +48,12 @@ int main() {
     }
     catch (const std::exception& e) {
         std::cerr << "[Fatal Error] " << e.what() << "\n";
+        std::cerr << "Client terminated safely.\n";
         return 1;
     }
     catch (...) {
         std::cerr << "[Fatal Error] Unknown exception occurred.\n";
+        std::cerr << "Client terminated safely.\n";
         return 1;
     }
 }
