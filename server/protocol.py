@@ -8,6 +8,7 @@ PUBKEY_SIZE    = 160
 MSG_ID_SIZE    = 4      # 32-bit message index
 MSG_TYPE_SIZE  = 1      # 1 byte
 CONTENT_SIZE = 4    # 32-bit content length field
+MAX_PAYLOAD_SIZE = 10 * 1024 * 1024
 
 # Request Codes
 REQ_REGISTER = 600
@@ -62,3 +63,12 @@ def unpack_response_header(data: bytes):
         "code": code,
         "payload_size": payload_size
     }
+
+
+def is_valid_uuid(uuid_bytes: bytes) -> bool:
+    return isinstance(uuid_bytes, (bytes, bytearray)) and len(uuid_bytes) == UUID_SIZE and any(uuid_bytes)
+
+def validate_payload_size(size: int):
+    if not (0 <= size <= MAX_PAYLOAD_SIZE):
+        raise ValueError(f"Invalid payload size: {size}")
+

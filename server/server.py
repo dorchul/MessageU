@@ -9,6 +9,7 @@ from protocol import (
     REQ_SEND_MESSAGE,
     REQ_WAITING_MESSAGES,
     RES_ERROR,
+    MAX_PAYLOAD_SIZE
 )
 from handler import (
     handle_register,
@@ -17,6 +18,7 @@ from handler import (
     handle_send_message,
     handle_get_waiting_messages,
     send_response,
+    STATE
 )
 
 # ==============================
@@ -64,10 +66,14 @@ def handle_client(conn, addr):
     try:
         # Read request header
         data = recv_exact(conn, REQ_HEADER_SIZE)
-        if not data:
-            return
+        if not data or len(data) != REQ_HEADER_SIZE:
+            raise ValueError("Invalid or incomplete header")
 
         client_id_bytes, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
+
+        if payload_size > MAX_PAYLOAD_SIZE:
+            raise ValueError("Payload too large") 
+        
         client_id_hex = client_id_bytes.hex()
         payload = recv_exact(conn, payload_size) if payload_size > 0 else b""
 
@@ -82,9 +88,18 @@ def handle_client(conn, addr):
 
         # Route to appropriate handler
         handler = ROUTES.get(code)
+        
+        if not handler:
+            raise ValueError(f"Unknown request code {code}")
+
+        if code != REQ_REGISTER and client_id_hex not in STATE["clients"]:
+            raise ValueError("Invalid or unregistered client UUID")
+        
         if handler:
-            if code in (REQ_REGISTER, REQ_PUBLIC_KEY):
+            if code == REQ_REGISTER:
                 handler(conn, payload)
+            elif code == REQ_PUBLIC_KEY:
+                handler(conn, payload, client_id_hex)
             elif code == REQ_CLIENTS_LIST:
                 handler(conn, client_id_hex)
             else:
@@ -94,9 +109,13 @@ def handle_client(conn, addr):
 
     except Exception as e:
         log(f"[ERROR] {e}")
+        try:
+            send_response(conn, RES_ERROR)
+        except Exception:
+            pass
     finally:
-        conn.close()
-        log(f"[-] Disconnected: {addr}")
+        conn.close()               # ensure stateless behavior
+        log(f"[-] Disconnected {addr}")
 
 # ==============================
 # Main server loop
