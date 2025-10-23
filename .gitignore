@@ -35,6 +35,9 @@ Release/
 [Bb]in/
 [Oo]bj/
 
+# VS solution
+MessageU.sln
+
 # --- Visual Studio project backup & cache ---
 *.lastbuildstate
 *.vscode/
