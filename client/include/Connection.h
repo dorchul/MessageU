@@ -8,7 +8,7 @@
 class Connection {
 public:
     Connection();
-    ~Connection();
+    ~ Connection();
 
     bool connectToServer(const std::string& ip, uint16_t port);
     bool sendAll(const uint8_t* data, size_t size);

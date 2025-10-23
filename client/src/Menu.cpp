@@ -1,4 +1,4 @@
-#include "Menu.h"
+﻿#include "Menu.h"
 #include "Utils.h"
 #include "Client.h"
 #include "Protocol.h"
@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <limits>
 
-void displayMessages(const std::vector<DecodedMessage>& decoded)
+void displayMessages(const Client& client, const std::vector<DecodedMessage>& decoded)
 {
     if (decoded.empty()) {
         std::cout << "  [No new messages]\n";
@@ -18,20 +18,16 @@ void displayMessages(const std::vector<DecodedMessage>& decoded)
     }
 
     for (const auto& msg : decoded) {
-        std::string typeName;
-        switch (msg.type) {
-        case MessageType::REQUEST_SYM: typeName = "Request Symmetric Key"; break;
-        case MessageType::SEND_SYM:     typeName = "Encrypted AES Key"; break;
-        case MessageType::TEXT:         typeName = "Encrypted Text"; break;
-        default:                        typeName = "Unknown"; break;
-        }
+        // Lookup sender name
+        std::string name = client.nameFor(msg.fromHex);
+        const std::string& fromDisplay = name.empty() ? msg.fromHex : name;
 
-        std::cout << "From: " << msg.fromHex
-            << " | Type=" << (int)msg.type
-            << " (" << typeName << ")\n"
-            << "     " << msg.text << "\n";
+        std::cout << "From: " << fromDisplay << "\n"
+            << "Content: " << msg.text << "\n"
+            << "-----<EOM>-----\n";
     }
 }
+
 
 // ===================================================
 // Interactive Menu (exception-safe)
@@ -67,21 +63,38 @@ void runMenu(Client& client, const std::string& dataDir)
         try {
             switch (choice) {
             case 110: {
-                client.doRegister(dataDir);
-                std::cout << "[+] Registered successfully as " << client.name() << "\n";
+                std::cout << "[Info] Registering user...\n";
+                try {
+                    if (client.doRegister(dataDir))
+                        std::cout << "[+] Registration complete. UUID file saved.\n";
+                    else
+                        std::cout << "[Info] Already registered.\n";
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "[Error] Registration failed: " << e.what() << "\n";
+                }
                 break;
             }
 
+
             case 120: {
-                auto list = client.requestClientsList();
-                if (list.empty()) {
-                    std::cout << "[!] No clients found.\n";
-                    break;
+                std::cout << "[Info] Requesting clients list...\n";
+                try {
+                    auto list = client.requestClientsList();
+                    client.cacheClientDirectory(list);
+
+                    if (list.empty()) {
+                        std::cout << "[!] No registered clients.\n";
+                        break;
+                    }
+
+                    std::cout << "[+] Clients list received (" << list.size() << " entries):\n";
+                    for (const auto& [uuid, name] : list)
+                        std::cout << "    " << name << " | " << Utils::uuidToHex(uuid) << "\n";
                 }
-                std::cout << "--- Clients List ---\n";
-                for (const auto& [uuid, name] : list)
-                    std::cout << "Name: " << name
-                    << " | UUID: " << Utils::uuidToHex(uuid) << "\n";
+                catch (const std::exception& e) {
+                    std::cerr << "[Error] Failed to get clients list: " << e.what() << "\n";
+                }
                 break;
             }
 
@@ -89,21 +102,42 @@ void runMenu(Client& client, const std::string& dataDir)
                 std::string target;
                 std::cout << "Enter target UUID (hex): ";
                 std::getline(std::cin, target);
+
                 if (target.size() != UUID_HEX_LEN) {
                     std::cout << "[!] UUID must be " << UUID_HEX_LEN << " hex chars.\n";
                     break;
                 }
-                auto key = client.requestPublicKey(target);
-                std::cout << "[+] Public key retrieved and cached (" << key.size() << " bytes)\n";
+
+                std::cout << "[Info] Requesting public key...\n";
+
+                try {
+                    auto key = client.requestPublicKey(target);   // logic-only call
+                    std::cout << "[+] Public key request completed - key is now available.\n";
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "[Error] Failed to request public key: " << e.what() << "\n";
+                }
                 break;
             }
 
             case 140: {
-                auto decoded = client.fetchMessages();
-                displayMessages(decoded);
+                std::cout << "[Info] Checking for waiting messages...\n";
+                try {
+                    auto decoded = client.fetchMessages();
+                    if (decoded.empty())
+                        std::cout << "[Info] No new messages.\n";
+                    else {
+                        std::cout << "[+] Received " << decoded.size() << " message(s):\n";
+                        displayMessages(client, decoded);
+                    }
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "[Error] Failed to retrieve messages: " << e.what() << "\n";
+                }
                 break;
             }
 
+            
             case 150:
             case 151:
             case 152: {
@@ -122,11 +156,6 @@ void runMenu(Client& client, const std::string& dataDir)
                     std::string text;
                     std::cout << "Enter message text: ";
                     std::getline(std::cin, text);
-                    if (text.size() > MAX_MESSAGE_BYTES) {
-                        std::cout << "[!] Message too long (max "
-                            << MAX_MESSAGE_BYTES / 1024 << " KB).\n";
-                        break;
-                    }
                     content.assign(text.begin(), text.end());
                     type = MessageType::TEXT;
                 }
@@ -137,9 +166,22 @@ void runMenu(Client& client, const std::string& dataDir)
                     type = MessageType::SEND_SYM;
                 }
 
-                auto toUUID = Utils::hexToUUID(targetHex);
-                client.sendMessage(toUUID, type, content);
-                std::cout << "[+] Message sent successfully.\n";
+                try {
+                    auto toUUID = Utils::hexToUUID(targetHex);
+                    bool ok = client.sendMessage(toUUID, type, content);
+
+                    if (ok)
+                        std::cout << "[+] Message sent successfully.\n";
+                    else {
+                        if (type == MessageType::REQUEST_SYM)
+                            std::cout << "[Info] Symmetric key already exists - request skipped.\n";
+                        else if (type == MessageType::TEXT)
+                            std::cout << "[!] Message not sent - missing symmetric key or message too large.\n";
+                    }
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "[Error] Failed to send message: " << e.what() << "\n";
+                }
                 break;
             }
 

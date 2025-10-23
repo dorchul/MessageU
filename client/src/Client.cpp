@@ -13,7 +13,7 @@
 #include <filesystem>
 #include <stdexcept>
 
-static const bool VERBOSE = true;
+static const bool VERBOSE = false;
 #define LOG(x) if (VERBOSE) { std::cout << x << std::endl; }
 
 // ==========================================================
@@ -95,7 +95,7 @@ namespace {
         keys.cacheSymmetricKey(senderHex, key);
 
         LOG("[KeyManager] Cached AES key in memory for " + senderHex.substr(0, 8));
-        return "[AES key cached in memory]";
+        return "[Symmetric key recieved]";
     }
 
     std::string decryptTextAES(const PendingMessage& msg,
@@ -156,6 +156,15 @@ namespace {
 
 } // anonymous namespace
 
+void Client::cacheClientDirectory(
+    const std::vector<std::pair<std::array<uint8_t, 16>, std::string>>& list)
+{
+    for (const auto& [uuidArr, name] : list) {
+        std::string hex = Utils::uuidToHex(uuidArr);
+        m_uuidToName[hex] = name;
+    }
+}
+
 // ===============================
 // Constructor
 // ===============================
@@ -204,7 +213,7 @@ bool Client::doRegister(const std::string& dataDir)
     const std::string mePath = dataDir + "/me.info";
     if (std::filesystem::exists(mePath)) {
         LOG("[" + m_name + "] Already registered, using " + mePath);
-        return true;
+        return false;
     }
 
     std::filesystem::create_directories(dataDir);
@@ -290,7 +299,6 @@ Client::requestClientsList() const
         clients.emplace_back(uuid, name);
     }
 
-
     return clients;
 }
 
@@ -306,32 +314,29 @@ std::vector<uint8_t> Client::requestPublicKey(const std::string& targetUUIDHex)
         return m_keys.getPublicKey(targetUUIDHex);
     }
 
-    ensureConnected(); // reconnect before each request (server closes after response)
+    ensureConnected();
     LOG("[602] Requesting public key for " + targetUUIDHex.substr(0, 8));
 
-    const std::array<uint8_t, UUID_SIZE> targetUUID = Utils::hexToUUID(targetUUIDHex);
-
+    const auto targetUUID = Utils::hexToUUID(targetUUIDHex);
     auto packet = Protocol::buildGetPublicKeyRequest(m_clientId.data(), targetUUID);
-    m_conn.sendAll(packet.data(), packet.size()); // use persistent connection
+    m_conn.sendAll(packet.data(), packet.size());
 
     ResponseHeader resp{};
-    Utils::recvResponseHeader(m_conn, resp); // host-endian
+    Utils::recvResponseHeader(m_conn, resp);
 
     if (resp.code != static_cast<uint16_t>(ResponseCode::PUBLIC_KEY) ||
         resp.payloadSize != UUID_SIZE + PUBKEY_SIZE)
-    {
-        throw std::runtime_error("Unexpected response to 602 (expected 2102 with fixed size)");
-    }
+        throw std::runtime_error("Unexpected response (expected 2102 with fixed size)");
 
     std::vector<uint8_t> buffer;
     Utils::recvPayload(m_conn, buffer, resp.payloadSize);
 
-    // ensure buffer is as expected
     if (buffer.size() != UUID_SIZE + PUBKEY_SIZE)
-        throw std::runtime_error("PUBLIC_KEY payload malformed");
+        throw std::runtime_error("Malformed PUBLIC_KEY payload");
 
     std::vector<uint8_t> pubKey(buffer.begin() + UUID_SIZE, buffer.end());
     m_keys.cachePublicKey(targetUUIDHex, pubKey);
+
     LOG("[602] Cached public key for " + targetUUIDHex.substr(0, 8));
     return pubKey;
 }
@@ -372,11 +377,15 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
     }
 
     case MessageType::TEXT:
-        if (!m_keys.hasSymmetricKey(targetHex))
-            throw std::runtime_error("No symmetric key in memory for this peer");
-        // cap plaintext size before encrypt
-        if (content.size() > MAX_MESSAGE_BYTES)
-            throw std::runtime_error("TEXT message too large");
+        if (!m_keys.hasSymmetricKey(targetHex)) {
+            LOG("[603] Aborted TEXT send – missing symmetric key.");
+            return false;
+        }
+
+        if (content.size() > MAX_MESSAGE_BYTES) {
+            LOG("[603] Aborted TEXT send – message too large.");
+            return false;
+        }
         finalContent = encryptTextAES(content, m_keys.getSymmetricKey(targetHex));
         break;
 
@@ -389,7 +398,7 @@ bool Client::sendMessage(const std::array<uint8_t, UUID_SIZE>& toClient,
 
     auto packet = Protocol::buildSendMessageRequest(
         m_clientId.data(), toClient.data(), type, finalContent);
-
+        
     return sendMessagePacket(m_conn, packet);
 }
 
