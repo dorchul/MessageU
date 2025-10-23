@@ -3,6 +3,7 @@
 # ========================
 
 # --- Visual Studio ---
+.vscode/   
 .vs/
 *.suo
 *.user
@@ -81,7 +82,7 @@ mono_crash.*
 *.orig
 *.swp
 *.swo
-
+.gitattributes
 # ========================
 # END
 # ========================
