@@ -1,6 +1,9 @@
 import socket
 import struct
 import threading
+
+from db import client_exists
+
 from protocol import (
     REQ_HEADER_FORMAT,
     REQ_REGISTER,
@@ -64,10 +67,14 @@ def recv_exact(conn, size):
 def handle_client(conn, addr):
     log(f"[+] Connected: {addr}")
     try:
-        # Read request header
         data = recv_exact(conn, REQ_HEADER_SIZE)
-        if not data or len(data) != REQ_HEADER_SIZE:
-            raise ValueError("Invalid or incomplete header")
+
+        if not data:
+            log(f"[WARN] Empty connection from {addr}, closing.")
+            return  # finally block will close the socket
+
+        if len(data) != REQ_HEADER_SIZE:
+            raise ValueError("Incomplete header")
 
         client_id_bytes, version, code, payload_size = struct.unpack(REQ_HEADER_FORMAT, data)
 
@@ -92,8 +99,11 @@ def handle_client(conn, addr):
         if not handler:
             raise ValueError(f"Unknown request code {code}")
 
-        if code != REQ_REGISTER and client_id_hex not in STATE["clients"]:
-            raise ValueError("Invalid or unregistered client UUID")
+        if code != REQ_REGISTER:
+            client_id_bytes = bytes.fromhex(client_id_hex)
+            if not client_exists(client_id_bytes):
+                raise ValueError("Invalid or unregistered client UUID")
+
         
         if handler:
             if code == REQ_REGISTER:

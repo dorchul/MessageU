@@ -208,14 +208,18 @@ bool Client::ensureConnected() const
 // ===============================
 bool Client::doRegister(const std::string& dataDir)
 {
-    ensureConnected(); // reconnect each time (server is stateless)
-
     const std::string mePath = dataDir + "/me.info";
+
+    // --- Check first ---
     if (std::filesystem::exists(mePath)) {
         LOG("[" + m_name + "] Already registered, using " + mePath);
         return false;
     }
 
+    // --- Only now connect ---
+    if (!ensureConnected())
+        return false;
+    
     std::filesystem::create_directories(dataDir);
     LOG("[" + m_name + "] Generating RSA key pair...");
     RSAPrivateWrapper rsa;
